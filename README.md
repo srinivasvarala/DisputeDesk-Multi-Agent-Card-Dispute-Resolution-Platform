@@ -8,15 +8,7 @@ LangGraph + FastAPI, runs locally, deploys to AWS.
 
 ## Status
 
-- [x] M0: Scaffold (uv, ruff, mypy, pytest, docker compose, LLM factory, CI)
-- [ ] M1: Data and MCP servers
-- [ ] M2: RAG over dispute policies
-- [ ] M3: Multi-agent graph
-- [ ] M4: Guardrails
-- [ ] M5: Security
-- [ ] M6: Observability
-- [ ] M7: Evals
-- [ ] M8: UI, docs and polish
+See [PROGRESS.md](PROGRESS.md) for milestone status and details.
 
 ## Quickstart
 
