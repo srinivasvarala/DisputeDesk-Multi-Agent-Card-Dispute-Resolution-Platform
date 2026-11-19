@@ -42,7 +42,7 @@ Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 | `docker compose up` is healthy | ✅ All 4 services healthy; pgvector 0.8.7 enabled; OTLP accepts traces |
 | `uv run pytest` passes | ✅ 12 passed |
 | ruff and mypy clean | ✅ |
-| CI green on first push | ⏸️ Not verified: no remote pushed yet |
+| CI green on first push | ✅ [Run 44620018996](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44620018996) passed on `2634756` |
 
 ### Decisions
 - Langfuse v2 instead of v3 (v3 needs ClickHouse, Redis, MinIO). See ADR-001.
