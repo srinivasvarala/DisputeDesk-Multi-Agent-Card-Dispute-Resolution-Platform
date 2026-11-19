@@ -9,6 +9,8 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LLMProvider = Literal["anthropic", "bedrock", "ollama", "fake"]
+EmbeddingProvider = Literal["fastembed", "fake"]
+RerankerProvider = Literal["fastembed", "fake", "none"]
 
 
 class Settings(BaseSettings):
@@ -29,6 +31,18 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
+
+    # --- RAG ---
+    # Local ONNX models via fastembed (free, no API key). Weights download on first use into
+    # model_cache_dir. "fake" providers are deterministic and offline, for unit tests.
+    embedding_provider: EmbeddingProvider = "fastembed"
+    embedding_model: str = "BAAI/bge-base-en-v1.5"
+    # bge models retrieve better with this instruction on the query side only.
+    embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
+    reranker_provider: RerankerProvider = "fastembed"  # "none" disables reranking
+    reranker_model: str = "BAAI/bge-reranker-base"
+    model_cache_dir: str = ".cache/models"
+    policies_dir: str = "data/policies"
 
     # --- Data ---
     database_url: str = "postgresql://postgres:postgres@localhost:5432/disputedesk"

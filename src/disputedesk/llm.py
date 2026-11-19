@@ -5,13 +5,19 @@ Every agent talks to an `LLMClient`. Pick the provider with `LLM_PROVIDER`:
 - bedrock:   Claude via Amazon Bedrock (stub until M9)
 - ollama:    local models via the Ollama REST API (offline dev)
 - fake:      deterministic, no network; used by unit/integration tests and CI
+
+It also owns the RAG model clients (`Embedder`, `Reranker`), so model SDKs stay in one place:
+- fastembed: local ONNX embedding and cross-encoder models (no API key)
+- fake:      deterministic, offline hashing/overlap stand-ins for unit tests
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import httpx2
 from pydantic import BaseModel, Field
@@ -228,3 +234,130 @@ def get_llm(settings: Settings | None = None) -> LLMClient:
             return OllamaClient(settings)
         case "fake":
             return FakeClient()
+
+
+# =========================================================================== RAG models
+
+
+class Embedder(Protocol):
+    provider: str
+    model: str
+    dim: int
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]: ...
+
+    def embed_query(self, text: str) -> list[float]: ...
+
+
+class Reranker(Protocol):
+    provider: str
+    model: str
+
+    def score(self, query: str, documents: Sequence[str]) -> list[float]:
+        """One relevance score per document, same order. Higher is more relevant."""
+        ...
+
+
+class FastEmbedEmbedder:
+    provider = "fastembed"
+
+    def __init__(self, settings: Settings) -> None:
+        from fastembed import TextEmbedding  # lazy: onnxruntime import is slow
+
+        self._model = TextEmbedding(
+            model_name=settings.embedding_model, cache_dir=settings.model_cache_dir
+        )
+        self.model = settings.embedding_model
+        self.dim: int = self._model.embedding_size
+        self._query_prefix = settings.embedding_query_prefix
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        return [cast(list[float], v.tolist()) for v in self._model.embed(list(texts))]
+
+    def embed_query(self, text: str) -> list[float]:
+        (vector,) = self._model.embed([self._query_prefix + text])
+        return cast(list[float], vector.tolist())
+
+
+class FastEmbedReranker:
+    provider = "fastembed"
+
+    def __init__(self, settings: Settings) -> None:
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+        self._model = TextCrossEncoder(
+            model_name=settings.reranker_model, cache_dir=settings.model_cache_dir
+        )
+        self.model = settings.reranker_model
+
+    def score(self, query: str, documents: Sequence[str]) -> list[float]:
+        return [float(s) for s in self._model.rerank(query, list(documents))]
+
+
+_TOKEN = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(text: str) -> list[str]:
+    return _TOKEN.findall(text.lower())
+
+
+class FakeEmbedder:
+    """Feature-hashed bag of words, L2-normalised. Deterministic and offline, and texts that
+    share words get similar vectors, so retrieval tests stay meaningful without a real model."""
+
+    provider = "fake"
+    model = "fake-hash-256"
+
+    def __init__(self, dim: int = 256) -> None:
+        self.dim = dim
+
+    def _embed(self, text: str) -> list[float]:
+        vector = [0.0] * self.dim
+        for token in _tokens(text):
+            bucket = int.from_bytes(hashlib.sha256(token.encode()).digest()[:4], "big")
+            vector[bucket % self.dim] += 1.0
+        norm = math.sqrt(sum(x * x for x in vector))
+        if norm == 0:  # pgvector cosine distance is undefined for a zero vector
+            vector[0] = 1.0
+            return vector
+        return [x / norm for x in vector]
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        return [self._embed(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+
+class FakeReranker:
+    """Score = share of the query's distinct words that appear in the document."""
+
+    provider = "fake"
+    model = "fake-overlap"
+
+    def score(self, query: str, documents: Sequence[str]) -> list[float]:
+        wanted = set(_tokens(query))
+        if not wanted:
+            return [0.0] * len(documents)
+        return [len(wanted & set(_tokens(doc))) / len(wanted) for doc in documents]
+
+
+def get_embedder(settings: Settings | None = None) -> Embedder:
+    settings = settings or get_settings()
+    match settings.embedding_provider:
+        case "fastembed":
+            return FastEmbedEmbedder(settings)
+        case "fake":
+            return FakeEmbedder()
+
+
+def get_reranker(settings: Settings | None = None) -> Reranker | None:
+    """The configured reranker, or None when reranking is disabled."""
+    settings = settings or get_settings()
+    match settings.reranker_provider:
+        case "fastembed":
+            return FastEmbedReranker(settings)
+        case "fake":
+            return FakeReranker()
+        case "none":
+            return None

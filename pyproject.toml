@@ -7,6 +7,7 @@ license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.11",        # default LLM provider (only imported in llm.py)
+    "fastembed>=0.9.1",        # local ONNX embeddings + cross-encoder reranker (only imported in llm.py)
     "httpx2>=2.16",           # Ollama REST calls; same client the anthropic SDK uses
     "mcp>=2.3",               # MCP Python SDK (MCPServer, formerly FastMCP) for the tool servers
     "psycopg[binary]>=3.3",   # Postgres driver for the stores and seed script
