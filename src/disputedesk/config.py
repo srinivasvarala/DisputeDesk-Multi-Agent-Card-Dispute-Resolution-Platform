@@ -12,10 +12,12 @@ LLMProvider = Literal["anthropic", "bedrock", "ollama", "fake"]
 
 
 class Settings(BaseSettings):
+    # .env is resolved from the current directory, so run commands from the repo root.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # --- LLM ---
-    llm_provider: LLMProvider = "anthropic"
+    # Default "fake" so a missing or unloaded .env can never trigger paid API calls.
+    llm_provider: LLMProvider = "fake"
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
 

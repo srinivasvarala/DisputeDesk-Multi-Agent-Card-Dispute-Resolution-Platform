@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import httpx2
 from pydantic import BaseModel, Field
@@ -43,6 +43,10 @@ class LLMError(RuntimeError):
 
 class LLMRefusalError(LLMError):
     """The model declined the request (stop_reason == 'refusal')."""
+
+
+class LLMTruncatedError(LLMError):
+    """Output hit max_tokens and is incomplete. Raise max_tokens or shorten the task."""
 
 
 class LLMClient(Protocol):
@@ -84,16 +88,23 @@ class AnthropicClient:
     ) -> LLMResponse:
         # Server-side refusal fallback: if the model declines, the API retries on a
         # fallback model inside the same call.
-        response = self._client.beta.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[_to_anthropic_message(m) for m in messages],
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
+        import anthropic
+
+        try:
+            response = self._client.beta.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[_to_anthropic_message(m) for m in messages],
+                betas=["server-side-fallback-2026-07-01"],
+                fallbacks="default",
+            )
+        except anthropic.APIError as exc:  # after SDK retries are exhausted
+            raise LLMError(f"anthropic request failed: {exc}") from exc
         if response.stop_reason == "refusal":
             raise LLMRefusalError(f"model refused: {response.stop_details}")
+        if response.stop_reason == "max_tokens":
+            raise LLMTruncatedError(f"output truncated at max_tokens={max_tokens}")
         text = "".join(block.text for block in response.content if block.type == "text")
         return LLMResponse(
             text=text,
@@ -145,11 +156,20 @@ class OllamaClient:
         try:
             resp = self._http.post("/api/chat", json=payload)
             resp.raise_for_status()
+            data: Any = resp.json()
         except httpx2.HTTPError as exc:
             raise LLMError(f"ollama request failed: {exc}") from exc
-        data = resp.json()
+        except ValueError as exc:
+            raise LLMError("ollama returned non-JSON response") from exc
+        # Ollama can answer HTTP 200 with {"error": "..."} (e.g. model not pulled).
+        if not isinstance(data, dict) or not isinstance(data.get("message"), dict):
+            detail = data.get("error") if isinstance(data, dict) else None
+            raise LLMError(f"ollama returned an unexpected response: {detail or data!r}")
+        text = str(data["message"].get("content", ""))
+        if data.get("done_reason") == "length":
+            raise LLMTruncatedError(f"output truncated at max_tokens={max_tokens}")
         return LLMResponse(
-            text=data["message"]["content"],
+            text=text,
             model=data.get("model", self._model),
             provider=self.provider,
             stop_reason=data.get("done_reason"),
