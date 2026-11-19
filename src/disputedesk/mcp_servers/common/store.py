@@ -3,6 +3,8 @@
 Three narrow interfaces keep read-only and write access separate:
 - `ReadStore`: lookups only. The transactions and merchant servers get nothing else.
 - `CaseWriteStore`: the only two writes in M1 (append a draft, change a case's status).
+  Each write takes the call's audit entry and stores it atomically with the change, so a
+  change is never committed without its audit row.
 - `AuditSink`: append an audit entry.
 
 Stores are deliberately simple (fetch and filter); aggregation and business rules live in the
@@ -71,14 +73,24 @@ class CaseWriteStore(Protocol):
         letter: str,
         author: str,
         now: datetime,
+        audit: AuditEntry,
     ) -> CaseDraft:
-        """Append the next draft version for a case."""
+        """Append the next draft version for a case, plus `audit`, in one transaction."""
         ...
 
     def set_case_status(
-        self, case_id: str, *, expected: CaseStatus, new: CaseStatus, now: datetime
+        self,
+        case_id: str,
+        *,
+        expected: CaseStatus,
+        new: CaseStatus,
+        now: datetime,
+        audit: AuditEntry,
     ) -> Case:
-        """Compare-and-set: raises ConflictError if the status is no longer `expected`."""
+        """Compare-and-set plus `audit`, in one transaction.
+
+        Raises ConflictError if the status is no longer `expected`.
+        """
         ...
 
 
@@ -93,7 +105,7 @@ class InMemoryStore:
     """Store backed by `SeedData`. Used by unit tests and anywhere a database is overkill."""
 
     def __init__(self, data: SeedData) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.customers = {c.customer_id: c for c in data.customers}
         self.merchants = {m.merchant_id: m for m in data.merchants}
         self.transactions = {t.txn_id: t for t in data.transactions}
@@ -164,11 +176,12 @@ class InMemoryStore:
         letter: str,
         author: str,
         now: datetime,
+        audit: AuditEntry,
     ) -> CaseDraft:
         with self._lock:
             if case_id not in self.cases:
                 raise NotFoundError(f"case {case_id} not found")
-            drafts = self.drafts.setdefault(case_id, [])
+            drafts = self.drafts.get(case_id, [])
             draft = CaseDraft(
                 case_id=case_id,
                 version=len(drafts) + 1,
@@ -178,11 +191,18 @@ class InMemoryStore:
                 author=author,
                 created_at=now,
             )
-            drafts.append(draft)
+            self.write_audit(audit)  # first: if it fails, nothing changes
+            self.drafts[case_id] = [*drafts, draft]
             return draft
 
     def set_case_status(
-        self, case_id: str, *, expected: CaseStatus, new: CaseStatus, now: datetime
+        self,
+        case_id: str,
+        *,
+        expected: CaseStatus,
+        new: CaseStatus,
+        now: datetime,
+        audit: AuditEntry,
     ) -> Case:
         with self._lock:
             case = self.cases.get(case_id)
@@ -191,6 +211,7 @@ class InMemoryStore:
             if case.status != expected:
                 raise ConflictError(f"case {case_id} status changed concurrently; retry")
             updated = case.model_copy(update={"status": new, "updated_at": now})
+            self.write_audit(audit)  # first: if it fails, nothing changes
             self.cases[case_id] = updated
             return updated
 
@@ -205,21 +226,24 @@ class InMemoryStore:
 class PostgresStore:
     """Store backed by the app database (schema in disputedesk/db/schema.sql).
 
-    One autocommit connection per server process; psycopg serialises use across threads.
+    One autocommit connection per server process. Sync tools run on worker threads and
+    psycopg only serialises single statements, so `_lock` is held for every statement *and*
+    for every whole transaction; otherwise another thread's statement could run inside it.
     """
 
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
+        self._lock = threading.RLock()
 
     def _one(self, query: LiteralString, params: tuple[Any, ...]) -> dict[str, Any] | None:
-        with self._conn.cursor(row_factory=dict_row) as cur:
+        with self._lock, self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(query, params)
             return cur.fetchone()
 
     def _all(
         self, query: LiteralString, params: tuple[Any, ...] | dict[str, Any]
     ) -> list[dict[str, Any]]:
-        with self._conn.cursor(row_factory=dict_row) as cur:
+        with self._lock, self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(query, params)
             return cur.fetchall()
 
@@ -304,8 +328,13 @@ class PostgresStore:
         letter: str,
         author: str,
         now: datetime,
+        audit: AuditEntry,
     ) -> CaseDraft:
-        with self._conn.transaction(), self._conn.cursor(row_factory=dict_row) as cur:
+        with (
+            self._lock,
+            self._conn.transaction(),
+            self._conn.cursor(row_factory=dict_row) as cur,
+        ):
             # Lock the case row so concurrent drafts get distinct version numbers.
             cur.execute("SELECT 1 FROM cases WHERE case_id = %s FOR UPDATE", (case_id,))
             if cur.fetchone() is None:
@@ -321,42 +350,62 @@ class PostgresStore:
                 (case_id, decision, rationale, letter, author, now, case_id),
             )
             row = cur.fetchone()
+            _insert_audit(cur, audit)
         assert row is not None
         return CaseDraft.model_validate(row)
 
     def set_case_status(
-        self, case_id: str, *, expected: CaseStatus, new: CaseStatus, now: datetime
+        self,
+        case_id: str,
+        *,
+        expected: CaseStatus,
+        new: CaseStatus,
+        now: datetime,
+        audit: AuditEntry,
     ) -> Case:
-        row = self._one(
-            """
-            UPDATE cases SET status = %s, updated_at = %s
-            WHERE case_id = %s AND status = %s
-            RETURNING *
-            """,
-            (new, now, case_id, expected),
-        )
-        if row is None:
-            if self.get_case(case_id) is None:
-                raise NotFoundError(f"case {case_id} not found")
-            raise ConflictError(f"case {case_id} status changed concurrently; retry")
+        with (
+            self._lock,
+            self._conn.transaction(),
+            self._conn.cursor(row_factory=dict_row) as cur,
+        ):
+            cur.execute(
+                """
+                UPDATE cases SET status = %s, updated_at = %s
+                WHERE case_id = %s AND status = %s
+                RETURNING *
+                """,
+                (new, now, case_id, expected),
+            )
+            row = cur.fetchone()
+            if row is None:
+                cur.execute("SELECT 1 FROM cases WHERE case_id = %s", (case_id,))
+                if cur.fetchone() is None:
+                    raise NotFoundError(f"case {case_id} not found")
+                raise ConflictError(f"case {case_id} status changed concurrently; retry")
+            _insert_audit(cur, audit)
         return Case.model_validate(row)
 
     def write_audit(self, entry: AuditEntry) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO audit_log
-                (created_at, actor, server, tool, case_id, arguments, outcome, error, duration_ms)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                entry.created_at,
-                entry.actor,
-                entry.server,
-                entry.tool,
-                entry.case_id,
-                Jsonb(entry.arguments),
-                entry.outcome,
-                entry.error,
-                entry.duration_ms,
-            ),
-        )
+        with self._lock, self._conn.cursor() as cur:
+            _insert_audit(cur, entry)
+
+
+def _insert_audit(cur: psycopg.Cursor[Any], entry: AuditEntry) -> None:
+    cur.execute(
+        """
+        INSERT INTO audit_log
+            (created_at, actor, server, tool, case_id, arguments, outcome, error, duration_ms)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            entry.created_at,
+            entry.actor,
+            entry.server,
+            entry.tool,
+            entry.case_id,
+            Jsonb(entry.arguments),
+            entry.outcome,
+            entry.error,
+            entry.duration_ms,
+        ),
+    )

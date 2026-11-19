@@ -26,6 +26,9 @@ from disputedesk.mcp_servers.common.store import AuditSink, ReadStore
 
 SERVER_NAME = "transactions"
 DEFAULT_PORT = 8101
+# Bounds keep date arithmetic safe (date.max + 1 day overflows) and reject nonsense ranges.
+MIN_DATE = date(2000, 1, 1)
+MAX_DATE = date(2100, 12, 31)
 READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
 
@@ -76,8 +79,12 @@ def build_server(store: ReadStore, audit: AuditSink, clock: Clock = utc_now) -> 
     def list_txns(
         customer_id: CustomerIdParam | None = None,
         merchant_id: MerchantIdParam | None = None,
-        since: Annotated[date | None, Field(description="Earliest posting date (UTC)")] = None,
-        until: Annotated[date | None, Field(description="Latest posting date (UTC)")] = None,
+        since: Annotated[
+            date | None, Field(ge=MIN_DATE, le=MAX_DATE, description="Earliest posting date (UTC)")
+        ] = None,
+        until: Annotated[
+            date | None, Field(ge=MIN_DATE, le=MAX_DATE, description="Latest posting date (UTC)")
+        ] = None,
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
         offset: Annotated[int, Field(ge=0, le=10_000)] = 0,
     ) -> TxnPage:
@@ -113,7 +120,7 @@ def build_server(store: ReadStore, audit: AuditSink, clock: Clock = utc_now) -> 
         start = end - timedelta(days=days)
         txns = store.list_transactions(customer_id=customer_id, since=start, until=end)
         disputes = [
-            c for c in store.list_cases(customer_id=customer_id) if start <= c.opened_at < end
+            c for c in store.list_cases(customer_id=customer_id) if start <= c.opened_at <= end
         ]
         counts = Counter(t.merchant_id for t in txns)
         totals: Counter[str] = Counter()

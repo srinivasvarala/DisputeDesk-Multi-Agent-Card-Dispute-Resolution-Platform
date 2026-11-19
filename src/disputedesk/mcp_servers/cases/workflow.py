@@ -5,12 +5,15 @@
       │          │  └─────────────┘ (sent back)
       └──────────┴──> escalated ──> in_review / resolved_*
 
-Resolving a case, or sending it for approval, requires at least one saved draft.
+Draft rules (the latest draft is the one that counts):
+- pending_approval needs a latest draft deciding accept or reject (escalate -> use escalated).
+- resolved_accepted needs latest decision accept; resolved_rejected needs reject.
+A human override of the draft is a separate, explicit path (M3/M5), not this tool.
 """
 
 from __future__ import annotations
 
-from disputedesk.db.models import CaseStatus
+from disputedesk.db.models import CaseStatus, Decision
 
 S = CaseStatus
 
@@ -28,14 +31,29 @@ ALLOWED_TRANSITIONS: dict[CaseStatus, frozenset[CaseStatus]] = {
 }
 
 TERMINAL = frozenset(s for s, nxt in ALLOWED_TRANSITIONS.items() if not nxt)
-NEEDS_DRAFT = frozenset({S.PENDING_APPROVAL, S.RESOLVED_ACCEPTED, S.RESOLVED_REJECTED})
+REQUIRED_DECISION: dict[CaseStatus, frozenset[Decision]] = {
+    S.PENDING_APPROVAL: frozenset({Decision.ACCEPT, Decision.REJECT}),
+    S.RESOLVED_ACCEPTED: frozenset({Decision.ACCEPT}),
+    S.RESOLVED_REJECTED: frozenset({Decision.REJECT}),
+}
 
 
-def transition_error(current: CaseStatus, new: CaseStatus, *, has_draft: bool) -> str | None:
+def transition_error(
+    current: CaseStatus, new: CaseStatus, *, latest_decision: Decision | None
+) -> str | None:
     """Return why `current -> new` is not allowed, or None if it is."""
     if new not in ALLOWED_TRANSITIONS[current]:
         allowed = ", ".join(sorted(ALLOWED_TRANSITIONS[current])) or "none (terminal)"
         return f"cannot move case from {current} to {new}; allowed: {allowed}"
-    if new in NEEDS_DRAFT and not has_draft:
+    required = REQUIRED_DECISION.get(new)
+    if required is None:
+        return None
+    if latest_decision is None:
         return f"cannot move case to {new} without a saved draft"
+    if latest_decision not in required:
+        wanted = " or ".join(sorted(required))
+        return (
+            f"cannot move case to {new}: latest draft decision is {latest_decision}, "
+            f"needs {wanted}; save a matching draft first"
+        )
     return None

@@ -3,14 +3,24 @@
 The hook is `call_tool`, which runs before argument validation, so rejected calls (bad types,
 unknown tools, unknown arguments) are audited too, not only successful ones.
 
-Audit is fail-closed: if the audit row cannot be written, the call returns an error.
+Rules:
+- Exactly one row per call: ok, invalid_input, not_found, conflict, error or cancelled.
+- Write tools store their ok row in the same transaction as the change (`audited_write`), so a
+  change is never committed without its audit row.
+- Fail-closed: if the row cannot be written, the call returns an error. The client gets a
+  generic message; database details are only logged server-side.
 """
 
 from __future__ import annotations
 
+import logging
 import time
+from collections.abc import Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
+import anyio
 import anyio.to_thread
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
@@ -19,6 +29,7 @@ from pydantic import ValidationError
 
 from disputedesk.db.models import AuditEntry, AuditOutcome
 from disputedesk.mcp_servers.common.errors import (
+    AuditUnavailableError,
     ConflictError,
     InvalidRequestError,
     NotFoundError,
@@ -26,8 +37,57 @@ from disputedesk.mcp_servers.common.errors import (
 from disputedesk.mcp_servers.common.params import Clock, utc_now
 from disputedesk.mcp_servers.common.store import AuditSink
 
+logger = logging.getLogger(__name__)
+
 UNKNOWN_ACTOR = "unknown"
 _MAX_ERROR_CHARS = 500
+
+
+@dataclass
+class _CallAudit:
+    """What we know about the tool call in progress."""
+
+    server: str
+    tool: str
+    actor: str
+    arguments: dict[str, Any]
+    clock: Clock
+    started: float
+    recorded: bool = False
+
+    def entry(self, outcome: AuditOutcome, error: str | None) -> AuditEntry:
+        case_id = self.arguments.get("case_id")
+        return AuditEntry(
+            server=self.server,
+            tool=self.tool,
+            actor=self.actor,
+            case_id=case_id if isinstance(case_id, str) else None,
+            arguments=self.arguments,
+            outcome=outcome,
+            error=error,
+            duration_ms=int((time.perf_counter() - self.started) * 1000),
+            created_at=self.clock(),
+        )
+
+
+# Set per call by AuditedMCPServer; anyio copies context into the worker thread a sync tool
+# runs on, so write tools can reach it.
+_current_call: ContextVar[_CallAudit | None] = ContextVar("current_call_audit", default=None)
+
+
+def audited_write[T](write: Callable[[AuditEntry], T]) -> T:
+    """Run a store write that persists the call's ok audit row in its own transaction.
+
+    Usage inside a write tool: `audited_write(lambda audit: store.add_draft(..., audit=audit))`.
+    Only after the write succeeds is the call marked as recorded, so a failed write still gets
+    an error row from AuditedMCPServer.
+    """
+    call = _current_call.get()
+    if call is None:
+        raise RuntimeError("audited_write used outside an AuditedMCPServer tool call")
+    result = write(call.entry(AuditOutcome.OK, None))
+    call.recorded = True
+    return result
 
 
 class AuditedMCPServer(MCPServer):
@@ -40,28 +100,39 @@ class AuditedMCPServer(MCPServer):
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Any, Any] | None = None
     ) -> CallToolResult | InputRequiredResult:
-        started = time.perf_counter()
-        outcome, error = AuditOutcome.OK, None
+        call = _CallAudit(
+            server=self.name or "unnamed",
+            tool=name,
+            actor=_actor(context),
+            arguments=arguments,
+            clock=self._clock,
+            started=time.perf_counter(),
+        )
+        token = _current_call.set(call)
+        outcome, error, cancelled = AuditOutcome.OK, None, False
         try:
             await self._reject_unknown_arguments(name, arguments)
             return await super().call_tool(name, arguments, context)
+        except anyio.get_cancelled_exc_class():
+            outcome, error, cancelled = AuditOutcome.CANCELLED, "call cancelled", True
+            raise
         except Exception as exc:
             outcome, error = classify(exc), describe(exc)
             raise
         finally:
-            case_id = arguments.get("case_id")
-            entry = AuditEntry(
-                server=self.name or "unnamed",
-                tool=name,
-                actor=_actor(context),
-                case_id=case_id if isinstance(case_id, str) else None,
-                arguments=arguments,
-                outcome=outcome,
-                error=error,
-                duration_ms=int((time.perf_counter() - started) * 1000),
-                created_at=self._clock(),
-            )
-            await anyio.to_thread.run_sync(self._audit.write_audit, entry)
+            _current_call.reset(token)
+            if not call.recorded:
+                await self._write(call.entry(outcome, error), cancelled=cancelled)
+
+    async def _write(self, entry: AuditEntry, *, cancelled: bool) -> None:
+        try:
+            # Shielded so a cancelled call still gets its audit row.
+            with anyio.CancelScope(shield=True):
+                await anyio.to_thread.run_sync(self._audit.write_audit, entry)
+        except Exception:
+            logger.exception("audit write failed for %s.%s", entry.server, entry.tool)
+            if not cancelled:  # never mask a cancellation
+                raise AuditUnavailableError("audit log unavailable; the call was refused") from None
 
     async def _reject_unknown_arguments(self, name: str, arguments: dict[str, Any]) -> None:
         """The SDK silently drops unknown arguments; we refuse them so typos are visible."""

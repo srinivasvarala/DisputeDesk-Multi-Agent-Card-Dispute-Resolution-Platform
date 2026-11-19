@@ -113,6 +113,7 @@ async def test_get_delivery_status_for_shipped_goods(
     shipment = next(s for s in store.shipments.values() if s.status == "delivered")
     data = ok(await call(merchant_server, "get_delivery_status", {"txn_id": shipment.txn_id}))
     assert data["applicable"] is True
+    assert data["shipment_found"] is True
     assert data["status"] == "delivered"
     assert data["tracking_number"] == shipment.tracking_number
     assert data["delivered_at"] is not None
@@ -121,10 +122,26 @@ async def test_get_delivery_status_for_shipped_goods(
 async def test_get_delivery_status_not_applicable_for_services(
     merchant_server: AuditedMCPServer, store: InMemoryStore
 ) -> None:
-    txn = next(t for t in store.transactions.values() if t.txn_id not in store.shipments)
+    txn = next(
+        t
+        for t in store.transactions.values()
+        if not store.merchants[t.merchant_id].ships_physical_goods
+    )
     data = ok(await call(merchant_server, "get_delivery_status", {"txn_id": txn.txn_id}))
-    assert data["applicable"] is False
-    assert data["status"] is None
+    assert (data["applicable"], data["shipment_found"], data["status"]) == (False, False, None)
+
+
+async def test_get_delivery_status_goods_never_shipped(
+    merchant_server: AuditedMCPServer, store: InMemoryStore
+) -> None:
+    # Duplicate charges at goods merchants have no shipment: shipping applies, none exists.
+    txn = next(
+        t
+        for t in store.transactions.values()
+        if store.merchants[t.merchant_id].ships_physical_goods and t.txn_id not in store.shipments
+    )
+    data = ok(await call(merchant_server, "get_delivery_status", {"txn_id": txn.txn_id}))
+    assert (data["applicable"], data["shipment_found"], data["status"]) == (True, False, None)
 
 
 @pytest.mark.parametrize(

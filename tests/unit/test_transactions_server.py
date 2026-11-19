@@ -96,6 +96,8 @@ async def test_list_txns_by_merchant_and_dates(
         ({"customer_id": "cus_0001", "limit": 101}, AuditOutcome.INVALID_INPUT, "less than"),
         ({"customer_id": "cus_0001", "offset": -1}, AuditOutcome.INVALID_INPUT, "greater than"),
         ({"customer_id": "cus_0001", "since": "yesterday"}, AuditOutcome.INVALID_INPUT, "date"),
+        ({"customer_id": "cus_0001", "until": "9999-12-31"}, AuditOutcome.INVALID_INPUT, "2100"),
+        ({"customer_id": "cus_0001", "since": "0001-01-01"}, AuditOutcome.INVALID_INPUT, "2000"),
         (
             {"customer_id": "cus_0001", "since": "2026-10-02", "until": "2026-10-01"},
             AuditOutcome.INVALID_INPUT,

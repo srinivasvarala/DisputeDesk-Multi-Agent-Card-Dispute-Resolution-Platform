@@ -234,11 +234,16 @@ def _transactions(
 
 
 def _shipments(
-    rng: random.Random, txns: list[Transaction], merchants: dict[str, Merchant]
+    rng: random.Random,
+    txns: list[Transaction],
+    merchants: dict[str, Merchant],
+    duplicate_charges: set[str],
 ) -> list[Shipment]:
+    """One shipment per physical-goods order. A duplicate charge is not a second order, so it
+    gets no shipment of its own."""
     out: list[Shipment] = []
     for txn in txns:
-        if not merchants[txn.merchant_id].ships_physical_goods:
+        if not merchants[txn.merchant_id].ships_physical_goods or txn.txn_id in duplicate_charges:
             continue
         shipped = txn.posted_at + timedelta(days=rng.randint(1, 3))
         roll = rng.random()
@@ -283,7 +288,11 @@ def _cases(
         used.add(dupe.txn_id)
     dupe_ids = {d.txn_id for _, d in dupe_pairs} | {o.txn_id for o, _ in dupe_pairs}
 
-    def pool(physical_only: bool, undelivered_bias: bool) -> tuple[list[Transaction], list[float]]:
+    def pool(reason: ReasonCode) -> tuple[list[Transaction], list[float]]:
+        physical_only = reason != ReasonCode.FRAUD
+        # "Not as described" means the item arrived, so it needs a delivered shipment.
+        delivered_only = reason == ReasonCode.NOT_AS_DESCRIBED
+        undelivered_bias = reason == ReasonCode.NOT_RECEIVED
         candidates = [
             t
             for t in txns
@@ -291,6 +300,7 @@ def _cases(
             and t.txn_id not in used
             and t.txn_id not in dupe_ids
             and (not physical_only or t.txn_id in shipments)
+            and (not delivered_only or shipments[t.txn_id].status == ShipmentStatus.DELIVERED)
         ]
         weights = []
         for t in candidates:
@@ -301,9 +311,8 @@ def _cases(
         return candidates, weights
 
     for reason in (ReasonCode.NOT_RECEIVED, ReasonCode.NOT_AS_DESCRIBED, ReasonCode.FRAUD):
-        physical = reason != ReasonCode.FRAUD
         for _ in range(DISPUTE_MIX[reason]):
-            candidates, weights = pool(physical, reason == ReasonCode.NOT_RECEIVED)
+            candidates, weights = pool(reason)
             txn = rng.choices(candidates, weights=weights)[0]
             picks.append((reason, txn))
             used.add(txn.txn_id)
@@ -340,7 +349,7 @@ def generate(seed: int = DEFAULT_SEED) -> SeedData:
     merchants = _merchants(rng)
     txns, dupe_pairs = _transactions(rng, customers, merchants)
     by_merchant = {m.merchant_id: m for m in merchants}
-    shipments = _shipments(rng, txns, by_merchant)
+    shipments = _shipments(rng, txns, by_merchant, {dupe.txn_id for _, dupe in dupe_pairs})
     cases = _cases(rng, txns, dupe_pairs, by_merchant, {s.txn_id: s for s in shipments})
     return SeedData(customers, merchants, txns, shipments, cases)
 

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from disputedesk.db.models import Case, CaseDraft, CaseStatus, Decision
 from disputedesk.mcp_servers.cases.workflow import ALLOWED_TRANSITIONS, TERMINAL, transition_error
-from disputedesk.mcp_servers.common.audit import AuditedMCPServer
+from disputedesk.mcp_servers.common.audit import AuditedMCPServer, audited_write
 from disputedesk.mcp_servers.common.errors import ConflictError, NotFoundError
 from disputedesk.mcp_servers.common.params import AgentNameParam, CaseIdParam, Clock, utc_now
 from disputedesk.mcp_servers.common.store import AuditSink, CaseWriteStore, ReadStore
@@ -110,13 +110,17 @@ def _register_write_tools(
         case = _require_case(read, case_id)
         if case.status in TERMINAL:
             raise ConflictError(f"case {case_id} is {case.status}; drafts are closed")
-        return write.add_draft(
-            case_id,
-            decision=decision,
-            rationale=rationale,
-            letter=letter,
-            author=author,
-            now=clock(),
+        now = clock()
+        return audited_write(
+            lambda audit: write.add_draft(
+                case_id,
+                decision=decision,
+                rationale=rationale,
+                letter=letter,
+                author=author,
+                now=now,
+                audit=audit,
+            )
         )
 
     @server.tool(annotations=STATE_CHANGE)
@@ -127,14 +131,24 @@ def _register_write_tools(
             str, Field(min_length=1, max_length=1_000, description="Why (kept in the audit log)")
         ],
     ) -> StatusChange:
-        """Move a case to a new status. Only transitions allowed by the case workflow succeed."""
+        """Move a case to a new status. Only transitions allowed by the case workflow succeed.
+
+        Resolving must match the latest draft's decision (accept -> resolved_accepted,
+        reject -> resolved_rejected); pending_approval needs an accept or reject draft.
+        """
         case = _require_case(read, case_id)
+        drafts = read.list_drafts(case_id)
         problem = transition_error(
-            case.status, new_status, has_draft=bool(read.list_drafts(case_id))
+            case.status, new_status, latest_decision=drafts[-1].decision if drafts else None
         )
         if problem:
             raise ConflictError(problem)
-        updated = write.set_case_status(case_id, expected=case.status, new=new_status, now=clock())
+        now = clock()
+        updated = audited_write(
+            lambda audit: write.set_case_status(
+                case_id, expected=case.status, new=new_status, now=now, audit=audit
+            )
+        )
         return StatusChange(
             case_id=case_id,
             previous_status=case.status,

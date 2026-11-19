@@ -59,6 +59,14 @@ def test_disputes_have_supporting_evidence_shape() -> None:
                 == (dupe.customer_id, dupe.merchant_id, dupe.amount_cents)
             ]
             assert twins, "duplicate dispute must have an identical earlier charge"
+    # A duplicate charge is not a second order: no shipment of its own.
+    for c in data.cases:
+        if c.reason_code == ReasonCode.DUPLICATE:
+            assert c.txn_id not in shipments
+    # "Not as described" means the item arrived.
+    for c in data.cases:
+        if c.reason_code == ReasonCode.NOT_AS_DESCRIBED:
+            assert shipments[c.txn_id].status == ShipmentStatus.DELIVERED
     # Some "not received" claims are contradicted by a delivered shipment (reject cases).
     nr_status = {shipments[c.txn_id].status for c in data.cases if c.reason_code == "not_received"}
     assert ShipmentStatus.DELIVERED in nr_status

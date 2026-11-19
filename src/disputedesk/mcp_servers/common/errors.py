@@ -15,3 +15,7 @@ class NotFoundError(ToolError):
 
 class ConflictError(ToolError):
     """The request is valid but not allowed in the entity's current state."""
+
+
+class AuditUnavailableError(ToolError):
+    """The audit row could not be written, so the call is refused (audit is fail-closed)."""

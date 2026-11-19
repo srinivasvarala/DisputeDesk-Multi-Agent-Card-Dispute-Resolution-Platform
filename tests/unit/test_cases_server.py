@@ -5,9 +5,9 @@ from typing import Any
 import pytest
 from mcp import Client
 
-from disputedesk.db.models import AuditOutcome, CaseStatus
-from disputedesk.db.seed import REFERENCE_TIME
-from disputedesk.mcp_servers.cases.server import READ_TOOLS, WRITE_TOOLS
+from disputedesk.db.models import AuditEntry, AuditOutcome, CaseStatus, Decision
+from disputedesk.db.seed import REFERENCE_TIME, generate
+from disputedesk.mcp_servers.cases.server import READ_TOOLS, WRITE_TOOLS, build_server
 from disputedesk.mcp_servers.cases.workflow import ALLOWED_TRANSITIONS, transition_error
 from disputedesk.mcp_servers.common.audit import AuditedMCPServer
 from disputedesk.mcp_servers.common.store import InMemoryStore
@@ -202,6 +202,75 @@ async def test_update_status_rejects_bad_input(
     assert store.cases["case_0001"].status == before
 
 
+async def _to_in_review_with_draft(
+    server: AuditedMCPServer, store: InMemoryStore, decision: str
+) -> str:
+    case_id = open_case(store)
+    args = {"case_id": case_id, "new_status": "in_review", "reason": "start"}
+    ok(await call(server, "update_status", args))
+    ok(await call(server, "save_draft", {"case_id": case_id, **DRAFT, "decision": decision}))
+    return case_id
+
+
+@pytest.mark.parametrize(
+    ("decision", "new_status"),
+    [
+        ("reject", "resolved_accepted"),
+        ("accept", "resolved_rejected"),
+        ("escalate", "resolved_accepted"),
+        ("escalate", "pending_approval"),
+    ],
+)
+async def test_update_status_must_match_latest_draft(
+    cases_server: AuditedMCPServer, store: InMemoryStore, decision: str, new_status: str
+) -> None:
+    case_id = await _to_in_review_with_draft(cases_server, store, decision)
+    args = {"case_id": case_id, "new_status": new_status, "reason": "mismatch"}
+    text = error_text(await call(cases_server, "update_status", args))
+    assert f"latest draft decision is {decision}" in text
+    assert last_audit(store).outcome == AuditOutcome.CONFLICT
+    assert store.cases[case_id].status == CaseStatus.IN_REVIEW
+
+
+async def test_update_status_uses_latest_not_any_draft(
+    cases_server: AuditedMCPServer, store: InMemoryStore
+) -> None:
+    case_id = await _to_in_review_with_draft(cases_server, store, "accept")
+    ok(await call(cases_server, "save_draft", {"case_id": case_id, **DRAFT, "decision": "reject"}))
+    accept = {"case_id": case_id, "new_status": "resolved_accepted", "reason": "stale draft"}
+    assert "latest draft decision is reject" in error_text(
+        await call(cases_server, "update_status", accept)
+    )
+    reject = {**accept, "new_status": "resolved_rejected", "reason": "matches latest"}
+    ok(await call(cases_server, "update_status", reject))
+
+
+async def test_each_write_call_writes_exactly_one_audit_row(
+    cases_server: AuditedMCPServer, store: InMemoryStore
+) -> None:
+    case_id = open_case(store)
+    ok(await call(cases_server, "save_draft", {"case_id": case_id, **DRAFT}))
+    args = {"case_id": case_id, "new_status": "in_review", "reason": "start"}
+    ok(await call(cases_server, "update_status", args))
+    assert [(e.tool, e.outcome) for e in store.audit] == [
+        ("save_draft", AuditOutcome.OK),
+        ("update_status", AuditOutcome.OK),
+    ]
+
+
+async def test_write_rolled_back_and_refused_when_audit_fails() -> None:
+    class FailingAudit(InMemoryStore):
+        def write_audit(self, entry: AuditEntry) -> None:
+            raise OSError("relation audit_log: permission denied")
+
+    store = FailingAudit(generate())
+    server = build_server(store, store, store, clock=lambda: REFERENCE_TIME)
+    case_id = open_case(store)
+    text = error_text(await call(server, "save_draft", {"case_id": case_id, **DRAFT}))
+    assert "permission denied" not in text
+    assert store.list_drafts(case_id) == []
+
+
 # --------------------------------------------------------------------------- workflow rules
 
 
@@ -209,7 +278,7 @@ def test_terminal_statuses_have_no_exits() -> None:
     for status in (CaseStatus.RESOLVED_ACCEPTED, CaseStatus.RESOLVED_REJECTED):
         assert not ALLOWED_TRANSITIONS[status]
         for target in CaseStatus:
-            assert transition_error(status, target, has_draft=True)
+            assert transition_error(status, target, latest_decision=Decision.ACCEPT)
 
 
 def test_every_status_has_transition_rules() -> None:

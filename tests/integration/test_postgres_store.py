@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from typing import Any
 
@@ -75,36 +77,120 @@ def test_list_cases_matches_in_memory(
     assert pg.list_cases(**kwargs) == mem.list_cases(**kwargs)
 
 
-def test_add_draft_versions(pg: PostgresStore) -> None:
-    kwargs: dict[str, Any] = {
-        "decision": Decision.REJECT,
-        "rationale": "r",
-        "letter": "l",
-        "author": "a",
-        "now": REFERENCE_TIME,
+def _audit(tag: str, **overrides: Any) -> AuditEntry:
+    fields: dict[str, Any] = {
+        "server": "cases",
+        "tool": "save_draft",
+        "actor": tag,
+        "case_id": None,
+        "arguments": {},
+        "outcome": AuditOutcome.OK,
+        "error": None,
+        "duration_ms": 0,
+        "created_at": REFERENCE_TIME,
     }
-    assert pg.add_draft("case_0003", **kwargs).version == 1
-    assert pg.add_draft("case_0003", **kwargs).version == 2
+    return AuditEntry(**{**fields, **overrides})
+
+
+def _audit_count(conn: psycopg.Connection, actor: str) -> int:
+    row = conn.execute("SELECT count(*) FROM audit_log WHERE actor = %s", (actor,)).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+DRAFT: dict[str, Any] = {
+    "decision": Decision.REJECT,
+    "rationale": "r",
+    "letter": "l",
+    "author": "a",
+    "now": REFERENCE_TIME,
+}
+
+
+def test_add_draft_versions_and_audits_atomically(
+    pg: PostgresStore, conn: psycopg.Connection
+) -> None:
+    tag = f"it-{uuid.uuid4().hex[:8]}"
+    assert pg.add_draft("case_0003", **DRAFT, audit=_audit(tag)).version == 1
+    assert pg.add_draft("case_0003", **DRAFT, audit=_audit(tag)).version == 2
     assert [d.version for d in pg.list_drafts("case_0003")] == [1, 2]
+    assert _audit_count(conn, tag) == 2
     with pytest.raises(NotFoundError):
-        pg.add_draft("case_9999", **kwargs)
+        pg.add_draft("case_9999", **DRAFT, audit=_audit(tag))
+    assert _audit_count(conn, tag) == 2
 
 
-def test_set_case_status_compare_and_set(pg: PostgresStore) -> None:
+def test_set_case_status_compare_and_set(pg: PostgresStore, conn: psycopg.Connection) -> None:
+    tag = f"it-{uuid.uuid4().hex[:8]}"
     current = pg.get_case("case_0004")
     assert current is not None
     updated = pg.set_case_status(
-        "case_0004", expected=current.status, new=CaseStatus.ESCALATED, now=REFERENCE_TIME
+        "case_0004",
+        expected=current.status,
+        new=CaseStatus.ESCALATED,
+        now=REFERENCE_TIME,
+        audit=_audit(tag),
     )
     assert (updated.status, updated.updated_at) == (CaseStatus.ESCALATED, REFERENCE_TIME)
     with pytest.raises(ConflictError):
         pg.set_case_status(
-            "case_0004", expected=current.status, new=CaseStatus.IN_REVIEW, now=REFERENCE_TIME
+            "case_0004",
+            expected=current.status,
+            new=CaseStatus.IN_REVIEW,
+            now=REFERENCE_TIME,
+            audit=_audit(tag),
         )
     with pytest.raises(NotFoundError):
         pg.set_case_status(
-            "case_9999", expected=CaseStatus.OPEN, new=CaseStatus.IN_REVIEW, now=REFERENCE_TIME
+            "case_9999",
+            expected=CaseStatus.OPEN,
+            new=CaseStatus.IN_REVIEW,
+            now=REFERENCE_TIME,
+            audit=_audit(tag),
         )
+    assert _audit_count(conn, tag) == 1
+
+
+def test_write_rolls_back_when_its_audit_row_fails(pg: PostgresStore) -> None:
+    # An argument that cannot be serialised to JSONB makes the audit INSERT fail.
+    bad = _audit("it-bad", arguments={"x": object()})
+    before = pg.get_case("case_0005")
+    assert before is not None
+    with pytest.raises(TypeError):
+        pg.add_draft("case_0005", **DRAFT, audit=bad)
+    with pytest.raises(TypeError):
+        pg.set_case_status(
+            "case_0005",
+            expected=before.status,
+            new=CaseStatus.ESCALATED,
+            now=REFERENCE_TIME,
+            audit=bad,
+        )
+    assert pg.list_drafts("case_0005") == []
+    assert pg.get_case("case_0005") == before
+
+
+def test_concurrent_writes_do_not_interleave(pg: PostgresStore, conn: psycopg.Connection) -> None:
+    """Drafts, failing drafts and audit writes from many threads on one shared connection."""
+    tag = f"it-{uuid.uuid4().hex[:8]}"
+
+    def good(_: int) -> None:
+        pg.add_draft("case_0006", **DRAFT, audit=_audit(tag))
+
+    def missing(_: int) -> None:
+        with pytest.raises(NotFoundError):
+            pg.add_draft("case_9999", **DRAFT, audit=_audit(tag))
+
+    def audit_only(_: int) -> None:
+        pg.write_audit(_audit(tag, tool="get_case"))
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futures = [pool.submit(fn, i) for i in range(20) for fn in (good, missing, audit_only)]
+        for f in futures:
+            f.result()
+
+    assert [d.version for d in pg.list_drafts("case_0006")] == list(range(1, 21))
+    assert _audit_count(conn, tag) == 40  # 20 drafts + 20 audit-only; failed drafts write none
 
 
 def test_write_audit_persists_row(pg: PostgresStore, conn: psycopg.Connection) -> None:

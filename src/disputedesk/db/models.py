@@ -157,6 +157,7 @@ class AuditOutcome(StrEnum):
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
     ERROR = "error"
+    CANCELLED = "cancelled"
 
 
 class AuditEntry(Record):

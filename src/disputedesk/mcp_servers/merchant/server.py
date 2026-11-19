@@ -37,6 +37,10 @@ class DeliveryStatus(BaseModel):
     txn_id: str
     merchant_id: str
     applicable: bool = Field(description="False when the merchant does not ship physical goods")
+    shipment_found: bool = Field(
+        description="Whether a shipment record exists. applicable=True with shipment_found=False "
+        "means the merchant ships goods but never shipped this order."
+    )
     status: ShipmentStatus | None = None
     carrier: str | None = None
     tracking_number: str | None = None
@@ -93,13 +97,20 @@ def build_server(store: ReadStore, audit: AuditSink, clock: Clock = utc_now) -> 
         txn = store.get_transaction(txn_id)
         if txn is None:
             raise NotFoundError(f"transaction {txn_id} not found")
+        merchant = require_merchant(txn.merchant_id)
         shipment = store.get_shipment(txn_id)
         if shipment is None:
-            return DeliveryStatus(txn_id=txn_id, merchant_id=txn.merchant_id, applicable=False)
+            return DeliveryStatus(
+                txn_id=txn_id,
+                merchant_id=txn.merchant_id,
+                applicable=merchant.ships_physical_goods,
+                shipment_found=False,
+            )
         return DeliveryStatus(
             txn_id=txn_id,
             merchant_id=txn.merchant_id,
             applicable=True,
+            shipment_found=True,
             status=shipment.status,
             carrier=shipment.carrier,
             tracking_number=shipment.tracking_number,
