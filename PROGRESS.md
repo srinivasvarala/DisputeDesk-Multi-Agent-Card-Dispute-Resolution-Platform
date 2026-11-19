@@ -5,7 +5,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | Milestone | Status | Completed | Commits |
 |---|---|---|---|
 | M0: Scaffold | ✅ Done | 2026-11-19 | `e473ea0`, `c1098da` |
-| M1: Data and MCP servers | ✅ Done (CI pending push) | 2026-11-19 | `5e295cf`, `27ecb5b`, `3b7fdb4`, `7850a87`, `d4d52e9` |
+| M1: Data and MCP servers | ✅ Done | 2026-11-19 | `5e295cf`, `27ecb5b`, `3b7fdb4`, `7850a87`, `d4d52e9` |
 | M2: RAG over dispute policies | ⏳ Not started | | |
 | M3: Multi-agent graph | ⏳ Not started | | |
 | M4: Guardrails | ⏳ Not started | | |
@@ -79,7 +79,7 @@ Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 | Unit tests cover each tool, including invalid input | ✅ 110 unit tests: every tool's happy path plus bad ID format, missing/extra arguments, out-of-range values, not found and illegal state changes, each asserting its audit row |
 | Every call writes to audit_log | ✅ asserted in unit tests (in-memory) and integration tests (Postgres) |
 | Integration | ✅ 20 passed (PostgresStore matches InMemoryStore; seed reload is idempotent; writes roll back if their audit row fails; concurrent writes on the shared connection stay consistent) |
-| CI green | ⏳ not pushed yet |
+| CI green | ✅ [Run 44631672292](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44631672292) passed on `25fc537`, including seed + integration steps |
 
 ### Decisions
 - **mcp 2.x**: FastMCP is now `MCPServer` in the official SDK; we use it rather than the separate `fastmcp` package.
