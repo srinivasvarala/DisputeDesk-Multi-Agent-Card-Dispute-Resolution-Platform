@@ -8,6 +8,8 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.11",        # default LLM provider (only imported in llm.py)
     "httpx2>=2.16",           # Ollama REST calls; same client the anthropic SDK uses
+    "mcp>=2.3.0",
+    "psycopg[binary]>=3.3.9",
     "pydantic>=2.9",          # schemas for all boundary data
     "pydantic-settings>=2.6", # env-var based config
 ]
