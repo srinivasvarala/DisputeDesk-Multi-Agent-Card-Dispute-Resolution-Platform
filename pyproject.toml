@@ -60,4 +60,5 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: needs running infra (Postgres etc.)",
+    "models: runs real local models (downloads weights on first run)",
 ]
