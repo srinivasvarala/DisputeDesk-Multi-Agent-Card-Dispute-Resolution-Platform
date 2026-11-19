@@ -36,6 +36,7 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy src
       - run: uv run pytest tests/unit -q
-      # Enabled in M2 (rag.ingest exists) and M3 (first integration tests).
+      - run: uv run python -m disputedesk.db.seed --reset
+      # Enabled in M2 (rag.ingest exists).
       # - run: uv run python -m disputedesk.rag.ingest --seed
-      # - run: uv run pytest tests/integration -q
+      - run: uv run pytest tests/integration -q
