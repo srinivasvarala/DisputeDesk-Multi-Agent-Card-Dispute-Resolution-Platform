@@ -255,7 +255,7 @@ Retrieval results on the 25-question set (k=5):
 6. New deps: `nemoguardrails`, `presidio-analyzer`, `presidio-anonymizer`, `spacy`, `en_core_web_sm`, `opentelemetry-api`; dev: `opentelemetry-sdk` (to assert span attributes).
 
 ### Known gaps
-- **Cap boundary mismatch:** `policy/11` says approval is needed *above* $500.00 (so exactly $500 is automatic). `graph.rules.risk_tier` (M3) and the new rule both use *at or above*. I kept the stricter, consistent behaviour. Needs a decision.
+- ~~Cap boundary mismatch~~ Resolved: approval is needed at **$500.00 or more** (decided by the user). `policy/11` was updated to match `graph.rules.risk_tier` and the guardrail rule.
 - No refund tool exists yet; the cap triggers on a `refund_cents`/`amount_cents` argument. Nothing sets it today, so it is exercised by tests only until a payout step exists.
 - `check_input`/`check_output` are not wired into intake/finalize. Required-evidence check and guardrail metrics (blueprint M4) not built. Metrics land with M6.
 - Heuristic jailbreak patterns are a baseline. Red-teaming is M7; untrusted-content wrapping is M5.

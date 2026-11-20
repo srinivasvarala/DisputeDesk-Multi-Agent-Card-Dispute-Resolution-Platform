@@ -6,7 +6,7 @@
 ## Automated decision limit
 
 An automated analyst may finalise an **accept** decision only when the refund amount is
-**$500.00 or less** and no escalation trigger below applies. Any refund above $500.00 must be
+**below $500.00** and no escalation trigger below applies. Any refund of $500.00 or more must be
 approved by a human approver before it is paid.
 
 An automated analyst may finalise a **reject** decision at any amount, provided no escalation
@@ -17,7 +17,7 @@ trigger applies and the decision letter cites the rule relied on.
 A case must be escalated to a human approver, without an automated final decision, when any of
 the following is true:
 
-1. The proposed refund is above $500.00.
+1. The proposed refund is $500.00 or more.
 2. The analyst's confidence in the decision is below 0.70.
 3. The reviewer has rejected the draft decision twice. A third draft is not attempted.
 4. The evidence conflicts in a way the reason-code rules do not settle.
