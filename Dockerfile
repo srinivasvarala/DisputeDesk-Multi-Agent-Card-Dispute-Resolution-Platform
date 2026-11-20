@@ -1,10 +1,16 @@
 # API image. Built by security.yml so Trivy can scan it; not yet used to deploy (M9).
 FROM python:3.12-slim
 
+# Pick up Debian security fixes released after the base image was built.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /usr/local/bin/uv
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    UV_NO_CACHE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app

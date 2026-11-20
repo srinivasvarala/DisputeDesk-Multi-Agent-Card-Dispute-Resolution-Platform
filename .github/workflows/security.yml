@@ -39,6 +39,10 @@ jobs:
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: disputedesk-api:scan
+          # Vulnerabilities only. Trivy's secret scanner flags docstrings inside third-party
+          # packages (e.g. `{"type": "service_account"}` in the anthropic SDK); repo secrets are
+          # gitleaks' job, and the image holds none (.dockerignore excludes .env).
+          scanners: vuln
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
