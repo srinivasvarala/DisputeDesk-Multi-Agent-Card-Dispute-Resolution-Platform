@@ -131,6 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--misses", action="store_true", help="print top-k for each miss")
+    parser.add_argument(
+        "--reranker-model",
+        action="append",
+        default=[],
+        help="compare hybrid + rerank across these fastembed reranker models (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -138,8 +144,22 @@ def main(argv: list[str] | None = None) -> int:
     cases = load_cases(args.dataset)
     with connect() as conn:
         ingest(conn, embedder, load_corpus(Path(settings.policies_dir)))  # no-op if current
-        retriever = Retriever(conn, embedder, get_reranker(settings))
-        reports = [evaluate(retriever, cases, c, k=args.k) for c in CONFIGS]
+        if args.reranker_model:
+            rerank = next(c for c in CONFIGS if c.rerank)
+            reports = [
+                evaluate(Retriever(conn, embedder), cases, CONFIGS[2], k=args.k)  # no rerank
+            ]
+            for model in args.reranker_model:
+                reranker = get_reranker(
+                    settings.model_copy(
+                        update={"reranker_provider": "fastembed", "reranker_model": model}
+                    )
+                )
+                report = evaluate(Retriever(conn, embedder, reranker), cases, rerank, k=args.k)
+                reports.append(report.model_copy(update={"config": f"rerank: {model}"}))
+        else:
+            retriever = Retriever(conn, embedder, get_reranker(settings))
+            reports = [evaluate(retriever, cases, c, k=args.k) for c in CONFIGS]
     print(format_reports(reports))
     if args.misses:
         for report in reports:

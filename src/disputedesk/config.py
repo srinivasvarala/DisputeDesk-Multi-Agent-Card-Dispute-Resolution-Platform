@@ -40,7 +40,8 @@ class Settings(BaseSettings):
     # bge models retrieve better with this instruction on the query side only.
     embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
     reranker_provider: RerankerProvider = "fastembed"  # "none" disables reranking
-    reranker_model: str = "BAAI/bge-reranker-base"
+    # Best of 4 fastembed rerankers on evals/datasets/retrieval.jsonl (see PROGRESS.md, M2).
+    reranker_model: str = "BAAI/bge-reranker-v2-m3-int8"
     model_cache_dir: str = ".cache/models"
     policies_dir: str = "data/policies"
 

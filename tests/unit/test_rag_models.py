@@ -50,7 +50,7 @@ def test_rag_defaults_are_local_fastembed_models() -> None:
     settings = make_settings()
     assert settings.embedding_provider == "fastembed"
     assert settings.embedding_model == "BAAI/bge-base-en-v1.5"
-    assert settings.reranker_model == "BAAI/bge-reranker-base"
+    assert settings.reranker_model == "BAAI/bge-reranker-v2-m3-int8"
 
 
 def test_rrf_sums_reciprocal_ranks() -> None:
