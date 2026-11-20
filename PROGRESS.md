@@ -125,7 +125,7 @@ Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 | Every answer carries at least one citation | ✅ Enforced in code (`PolicyAnswer.citations` min 1, verbatim-quote check); integration test over all 25 questions |
 | Ingestion is idempotent | ✅ Second run: 0 embedded, 92 unchanged (1.3s); tests cover change/add/remove, model change, dimension change, rollback |
 | Lint, types, tests | ✅ ruff, mypy; 160 unit, 44 integration |
-| CI green | ⏳ Not pushed yet |
+| CI green | ✅ [Run 44652878826](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44652878826) passed on `9cd6ac2` in ~4 min, including ingest, model download + cache, and the retrieval-quality gate |
 
 Retrieval results on the 25-question set (k=5):
 
