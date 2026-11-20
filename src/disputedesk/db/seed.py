@@ -4,7 +4,8 @@ Everything here is fake. `generate()` is pure (same seed -> same data) so unit t
 in-memory store can use it without a database. The CLI loads it into Postgres:
 
     uv run python -m disputedesk.db.seed           # load into an empty database
-    uv run python -m disputedesk.db.seed --reset   # wipe app data (not audit_log) and reload
+    uv run python -m disputedesk.db.seed --reset   # wipe app data + workflow checkpoints
+                                                   # (not audit_log) and reload
 """
 
 from __future__ import annotations
@@ -357,6 +358,9 @@ def generate(seed: int = DEFAULT_SEED) -> SeedData:
 # ---------------------------------------------------------------- Postgres loading
 
 _APP_TABLES = "case_drafts, cases, shipments, transactions, merchants, customers"
+# LangGraph checkpoints are keyed by case id, so a reseed must drop them or old runs would
+# block the new cases with the same ids. (Created by the API at startup; absent before that.)
+_CHECKPOINT_TABLES = ("checkpoints", "checkpoint_blobs", "checkpoint_writes")
 
 
 def load(conn: psycopg.Connection, data: SeedData, *, reset: bool = False) -> None:
@@ -365,6 +369,11 @@ def load(conn: psycopg.Connection, data: SeedData, *, reset: bool = False) -> No
     with conn.transaction(), conn.cursor() as cur:
         if reset:
             cur.execute(f"TRUNCATE {_APP_TABLES}")
+            for table in _CHECKPOINT_TABLES:
+                cur.execute("SELECT to_regclass(%s)", (table,))
+                found = cur.fetchone()
+                if found and found[0]:
+                    cur.execute(f"TRUNCATE {table}")
         else:
             cur.execute("SELECT EXISTS (SELECT 1 FROM customers)")
             row = cur.fetchone()

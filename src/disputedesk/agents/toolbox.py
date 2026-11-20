@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
 
@@ -101,15 +102,20 @@ class ToolBox:
 
 
 def tool_index(servers: Iterable[MCPServer]) -> dict[str, MCPServer]:
-    """Map each tool name to the server that provides it (sync; reads the server's registry)."""
+    """Map each tool name to the server that provides it.
+
+    Safe to call from inside a running event loop (e.g. app startup): the async lookup runs on
+    its own thread, because `asyncio.run` refuses to start in a thread that already has a loop.
+    """
 
     async def names(server: MCPServer) -> list[str]:
         return [t.name for t in await server.list_tools()]
 
     index: dict[str, MCPServer] = {}
-    for server in servers:
-        for name in asyncio.run(names(server)):
-            if name in index:
-                raise ValueError(f"tool name {name} is provided by two servers")
-            index[name] = server
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        for server in servers:
+            for name in pool.submit(asyncio.run, names(server)).result():
+                if name in index:
+                    raise ValueError(f"tool name {name} is provided by two servers")
+                index[name] = server
     return index

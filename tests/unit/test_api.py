@@ -10,6 +10,7 @@ from disputedesk.api.app import create_app
 from disputedesk.api.runtime import Runtime, build_runtime
 from disputedesk.config import Settings
 from disputedesk.db.models import CaseStatus
+from disputedesk.graph.state import DisputeState
 from disputedesk.llm import FakeClient
 from disputedesk.mcp_servers.common.store import InMemoryStore
 from tests.conftest import make_settings
@@ -172,3 +173,28 @@ def test_a_crashed_run_escalates_the_case(store: InMemoryStore, settings: Settin
     failures = [e for e in store.audit if e.tool == "workflow_failed"]
     assert len(failures) == 1
     assert failures[0].case_id == case_id
+
+
+class _Snapshot:
+    def __init__(self, values: dict[str, object], next_: tuple[str, ...]) -> None:
+        self.values, self.next, self.tasks = values, next_, []
+
+
+class _FakeGraph:
+    def __init__(self, snapshot: _Snapshot) -> None:
+        self._snapshot = snapshot
+
+    def get_state(self, config: object) -> _Snapshot:
+        return self._snapshot
+
+
+def test_empty_next_between_nodes_is_not_reported_as_completed(store: InMemoryStore) -> None:
+    """A checkpoint taken between two nodes can have no `next` yet; the case is still running."""
+    case_id = store.list_cases()[0].case_id
+    mid_run = _Snapshot(DisputeState(case_id=case_id, path=["intake", "router"]).model_dump(), ())
+    runtime = Runtime(graph=_FakeGraph(mid_run), store=store, failure_tools=None)  # type: ignore[arg-type]
+    assert runtime.view(case_id).workflow == "running"
+
+    finished = DisputeState(case_id=case_id, final_status=CaseStatus.RESOLVED_ACCEPTED)
+    runtime.graph = _FakeGraph(_Snapshot(finished.model_dump(), ()))  # type: ignore[assignment]
+    assert runtime.view(case_id).workflow == "completed"

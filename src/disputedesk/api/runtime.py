@@ -34,6 +34,7 @@ from disputedesk.config import Settings, get_settings
 from disputedesk.db import apply_schema, connect
 from disputedesk.db.models import AuditOutcome, CaseStatus
 from disputedesk.graph.builder import build_graph
+from disputedesk.graph.serde import checkpoint_serde
 from disputedesk.graph.state import DisputeState
 from disputedesk.graph.wiring import Dependencies, build_nodes
 from disputedesk.llm import FakeClient, LLMClient, get_embedder, get_llm, get_reranker
@@ -80,10 +81,13 @@ class Runtime:
                 case_id=case_id, case_status=case.status, workflow=WorkflowState.NOT_STARTED
             )
         state = DisputeState.model_validate(snap.values)
-        if any(task.interrupts for task in snap.tasks):
-            workflow = WorkflowState.AWAITING_APPROVAL
-        elif not snap.next:
+        # `snap.next` being empty is NOT proof of completion: between two nodes LangGraph can
+        # checkpoint before the next conditional edge is resolved. Only finalize/escalate set
+        # `final_status`, so that is the completion signal.
+        if state.final_status is not None:
             workflow = WorkflowState.COMPLETED
+        elif any(task.interrupts for task in snap.tasks):
+            workflow = WorkflowState.AWAITING_APPROVAL
         elif case.status == CaseStatus.ESCALATED:
             workflow = WorkflowState.FAILED  # a crashed run escalates the case
         else:
@@ -206,7 +210,7 @@ def open_runtime(settings: Settings | None = None) -> Iterator[Runtime]:
         ) as pool,
     ):
         apply_schema(conn)
-        checkpointer = PostgresSaver(pool)  # type: ignore[arg-type]
+        checkpointer = PostgresSaver(pool, serde=checkpoint_serde())  # type: ignore[arg-type]
         checkpointer.setup()
         retriever = Retriever(rag_conn, get_embedder(settings), get_reranker(settings))
         yield build_runtime(

@@ -55,3 +55,9 @@ def test_call_outside_allowlist_is_denied_and_audited(box: ToolBox, store: InMem
 def test_server_errors_surface_as_tool_call_errors(box: ToolBox) -> None:
     with pytest.raises(ToolCallError, match="not found"):
         box.call("get_txn", {"txn_id": "txn_999999"})
+
+
+@pytest.mark.anyio
+async def test_tool_index_works_inside_a_running_event_loop(txn_server: AuditedMCPServer) -> None:
+    """API startup builds the graph inside uvicorn's loop; this used to crash there."""
+    assert "get_txn" in tool_index([txn_server])
