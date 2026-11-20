@@ -159,6 +159,7 @@ class AuditOutcome(StrEnum):
     ERROR = "error"
     CANCELLED = "cancelled"
     APPROVAL_REQUIRED = "approval_required"  # a guardrail sent the action to a human
+    DENIED = "denied"  # missing or invalid credential, or a tool the caller was not granted
 
 
 class AuditEntry(Record):

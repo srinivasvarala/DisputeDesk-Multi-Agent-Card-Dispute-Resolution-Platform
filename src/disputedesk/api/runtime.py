@@ -43,6 +43,7 @@ from disputedesk.mcp_servers.common.store import AuditSink, CaseWriteStore, Post
 from disputedesk.mcp_servers.merchant import server as merchant_server
 from disputedesk.mcp_servers.transactions import server as transactions_server
 from disputedesk.rag.retriever import Retriever
+from disputedesk.security.agent_tokens import CredentialIssuer, CredentialVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -181,13 +182,20 @@ def build_runtime(
     store: FullStore,
     checkpointer: BaseCheckpointSaver[Any] | None,
 ) -> Runtime:
+    issuer = CredentialIssuer(settings)  # raises if JWT_SECRET is missing or weak
+    verifier = CredentialVerifier(settings)
     servers = [
-        transactions_server.build_server(store, store),
-        merchant_server.build_server(store, store),
-        cases_server.build_server(store, store, store),
+        transactions_server.build_server(store, store, verifier=verifier),
+        merchant_server.build_server(store, store, verifier=verifier),
+        cases_server.build_server(store, store, store, verifier=verifier),
     ]
     deps = Dependencies(
-        settings=settings, llm=llm, retriever=retriever, servers=servers, audit=store
+        settings=settings,
+        llm=llm,
+        retriever=retriever,
+        servers=servers,
+        audit=store,
+        issuer=issuer,
     )
     graph = build_graph(build_nodes(deps), checkpointer)
     failure_tools = ToolBox(
@@ -197,6 +205,7 @@ def build_runtime(
         audit=store,
         timeout=settings.tool_timeout_seconds,
         retries=settings.tool_max_retries,
+        issuer=issuer,
     )
     return Runtime(graph=graph, store=store, failure_tools=failure_tools)
 

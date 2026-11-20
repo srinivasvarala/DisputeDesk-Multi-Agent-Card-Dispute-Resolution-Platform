@@ -23,6 +23,7 @@ from disputedesk.mcp_servers.common.params import (
     utc_now,
 )
 from disputedesk.mcp_servers.common.store import AuditSink, ReadStore
+from disputedesk.security.agent_tokens import CredentialVerifier
 
 SERVER_NAME = "transactions"
 DEFAULT_PORT = 8101
@@ -59,11 +60,17 @@ class CustomerHistory(BaseModel):
     last_txn_at: datetime | None
 
 
-def build_server(store: ReadStore, audit: AuditSink, clock: Clock = utc_now) -> AuditedMCPServer:
+def build_server(
+    store: ReadStore,
+    audit: AuditSink,
+    clock: Clock = utc_now,
+    verifier: CredentialVerifier | None = None,
+) -> AuditedMCPServer:
     server = AuditedMCPServer(
         SERVER_NAME,
         audit=audit,
         clock=clock,
+        verifier=verifier,
         instructions="Read-only card transaction lookups for dispute evidence. Synthetic data.",
     )
 

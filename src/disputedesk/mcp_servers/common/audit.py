@@ -9,6 +9,9 @@ Rules:
   change is never committed without its audit row.
 - Fail-closed: if the row cannot be written, the call returns an error. The client gets a
   generic message; database details are only logged server-side.
+- With a `verifier`, every call must carry a valid agent credential that grants the tool. The
+  audit actor is then the verified agent, never the client's self-declared name. A refused call
+  is audited as `denied` and never reaches the tool.
 """
 
 from __future__ import annotations
@@ -33,9 +36,12 @@ from disputedesk.mcp_servers.common.errors import (
     ConflictError,
     InvalidRequestError,
     NotFoundError,
+    PermissionDeniedError,
 )
 from disputedesk.mcp_servers.common.params import Clock, utc_now
 from disputedesk.mcp_servers.common.store import AuditSink
+from disputedesk.security.agent_tokens import META_KEY, CredentialVerifier
+from disputedesk.security.jwt import AuthError
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +97,19 @@ def audited_write[T](write: Callable[[AuditEntry], T]) -> T:
 
 
 class AuditedMCPServer(MCPServer):
-    def __init__(self, name: str, *, audit: AuditSink, clock: Clock = utc_now, **kwargs: Any):
+    def __init__(
+        self,
+        name: str,
+        *,
+        audit: AuditSink,
+        clock: Clock = utc_now,
+        verifier: CredentialVerifier | None = None,
+        **kwargs: Any,
+    ):
         super().__init__(name, **kwargs)
         self._audit = audit
         self._clock = clock
+        self._verifier = verifier
         self._arg_names: dict[str, frozenset[str]] | None = None
 
     async def call_tool(
@@ -111,6 +126,7 @@ class AuditedMCPServer(MCPServer):
         token = _current_call.set(call)
         outcome, error, cancelled = AuditOutcome.OK, None, False
         try:
+            self._authorize(call, context)
             await self._reject_unknown_arguments(name, arguments)
             return await super().call_tool(name, arguments, context)
         except anyio.get_cancelled_exc_class():
@@ -123,6 +139,19 @@ class AuditedMCPServer(MCPServer):
             _current_call.reset(token)
             if not call.recorded:
                 await self._write(call.entry(outcome, error), cancelled=cancelled)
+
+    def _authorize(self, call: _CallAudit, context: Context[Any, Any] | None) -> None:
+        """Check the agent credential. No-op when the server has no verifier (standalone demo)."""
+        if self._verifier is None:
+            return
+        call.actor = f"unauthenticated:{call.actor}"  # until proven otherwise
+        try:
+            identity = self._verifier.verify(_credential(context))
+        except AuthError:
+            raise PermissionDeniedError("missing or invalid credential") from None
+        call.actor = identity.agent
+        if call.tool not in identity.tools:
+            raise PermissionDeniedError(f"{identity.agent} is not granted {call.tool}")
 
     async def _write(self, entry: AuditEntry, *, cancelled: bool) -> None:
         try:
@@ -149,6 +178,16 @@ class AuditedMCPServer(MCPServer):
             raise InvalidRequestError(f"unknown argument(s) for {name}: {', '.join(extra)}")
 
 
+def _credential(context: Context[Any, Any] | None) -> object:
+    if context is None:
+        return None
+    try:
+        meta = context.request_context.meta
+    except ValueError:
+        return None
+    return meta.get(META_KEY) if isinstance(meta, dict) else None
+
+
 def classify(exc: BaseException) -> AuditOutcome:
     """Map a tool exception to an audit outcome.
 
@@ -159,6 +198,8 @@ def classify(exc: BaseException) -> AuditOutcome:
             return AuditOutcome.NOT_FOUND
         if isinstance(err, ConflictError):
             return AuditOutcome.CONFLICT
+        if isinstance(err, PermissionDeniedError):
+            return AuditOutcome.DENIED
         if isinstance(err, InvalidRequestError | ValidationError):
             return AuditOutcome.INVALID_INPUT
     if isinstance(exc, UnexpectedToolError):
@@ -177,7 +218,7 @@ def describe(exc: BaseException) -> str:
 
 
 def _actor(context: Context[Any, Any] | None) -> str:
-    """Caller identity: the MCP client name for now. Replaced by verified identity in M5."""
+    """The client's self-declared name. Only trusted when the server has no verifier."""
     if context is None:
         return UNKNOWN_ACTOR
     try:

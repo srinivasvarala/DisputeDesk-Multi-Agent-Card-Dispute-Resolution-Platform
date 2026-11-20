@@ -25,6 +25,7 @@ from disputedesk.graph.state import DisputeState, Verdict
 from disputedesk.graph.system_nodes import WorkflowSteps
 from disputedesk.llm import LLMClient
 from disputedesk.mcp_servers.common.store import AuditSink
+from disputedesk.security.agent_tokens import CredentialIssuer
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class Dependencies:
     retriever: PolicySearch
     servers: Sequence[MCPServer]  # transactions, merchant, cases
     audit: AuditSink
+    issuer: CredentialIssuer | None = None  # None: tool calls carry no credential (tests)
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
 
@@ -50,6 +52,7 @@ def build_nodes(deps: Dependencies) -> Nodes:
             audit=deps.audit,
             timeout=s.tool_timeout_seconds,
             retries=s.tool_max_retries,
+            issuer=deps.issuer,
         )
 
     def auditor(agent: str) -> DecisionAuditor:

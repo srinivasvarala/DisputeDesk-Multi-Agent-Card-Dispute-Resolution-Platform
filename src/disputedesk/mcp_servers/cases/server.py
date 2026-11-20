@@ -20,6 +20,7 @@ from disputedesk.mcp_servers.common.audit import AuditedMCPServer, audited_write
 from disputedesk.mcp_servers.common.errors import ConflictError, NotFoundError
 from disputedesk.mcp_servers.common.params import AgentNameParam, CaseIdParam, Clock, utc_now
 from disputedesk.mcp_servers.common.store import AuditSink, CaseWriteStore, ReadStore
+from disputedesk.security.agent_tokens import CredentialVerifier
 
 SERVER_NAME = "cases"
 DEFAULT_PORT = 8103
@@ -55,12 +56,17 @@ class StatusChange(BaseModel):
 
 
 def build_server(
-    read: ReadStore, write: CaseWriteStore, audit: AuditSink, clock: Clock = utc_now
+    read: ReadStore,
+    write: CaseWriteStore,
+    audit: AuditSink,
+    clock: Clock = utc_now,
+    verifier: CredentialVerifier | None = None,
 ) -> AuditedMCPServer:
     server = AuditedMCPServer(
         SERVER_NAME,
         audit=audit,
         clock=clock,
+        verifier=verifier,
         instructions="Dispute case records. get_case is read-only; save_draft and "
         "update_status change data. All data is synthetic.",
     )

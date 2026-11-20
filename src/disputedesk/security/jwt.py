@@ -36,7 +36,7 @@ class Principal(BaseModel):
         return scopes_for(self.role)
 
 
-def _secret(settings: Settings) -> str:
+def signing_secret(settings: Settings) -> str:
     if settings.jwt_secret is None:
         raise RuntimeError("JWT_SECRET is not set")
     secret = settings.jwt_secret.get_secret_value()
@@ -47,7 +47,7 @@ def _secret(settings: Settings) -> str:
 
 def require_jwt_config(settings: Settings) -> None:
     """Fail at startup, not on the first request, when the secret is missing or weak."""
-    _secret(settings)
+    signing_secret(settings)
 
 
 def issue_token(settings: Settings, *, sub: str, role: Role, now: datetime | None = None) -> str:
@@ -60,14 +60,14 @@ def issue_token(settings: Settings, *, sub: str, role: Role, now: datetime | Non
         "iat": issued,
         "exp": issued + timedelta(minutes=settings.jwt_ttl_minutes),
     }
-    return jwt.encode(claims, _secret(settings), algorithm=ALGORITHM)
+    return jwt.encode(claims, signing_secret(settings), algorithm=ALGORITHM)
 
 
 def verify_token(settings: Settings, token: str) -> Principal:
     try:
         claims = jwt.decode(
             token,
-            _secret(settings),
+            signing_secret(settings),
             algorithms=[ALGORITHM],
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,

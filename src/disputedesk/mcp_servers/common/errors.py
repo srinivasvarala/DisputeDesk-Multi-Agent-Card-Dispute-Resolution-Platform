@@ -19,3 +19,7 @@ class ConflictError(ToolError):
 
 class AuditUnavailableError(ToolError):
     """The audit row could not be written, so the call is refused (audit is fail-closed)."""
+
+
+class PermissionDeniedError(ToolError):
+    """The caller presented no valid credential, or the credential does not grant this tool."""
