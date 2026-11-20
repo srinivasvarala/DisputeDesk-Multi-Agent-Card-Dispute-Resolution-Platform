@@ -9,7 +9,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M2: RAG over dispute policies | ✅ Done | 2026-11-19 | `27fd98f`, `8a32400`, `0631988`, `1748131`, `ae83fc6`, `7e8f6a3`, `9c5d32c`, `7537998` |
 | M3: Multi-agent graph | ✅ Done | 2026-11-19 | `db8dfe8`, `3666e3e`, `0df42de`, `183817d`, `d095789`, `278f927`, `a7a348a`, `57183d1`, `6827e19`, `4c5c935`, `887b0f2` |
 | M4: Guardrails | ✅ Done | 2026-11-19 | (see git log, `feat(guardrails)`) |
-| M5: Security | ✅ Done (CI run pending) | 2026-11-19 | see git log, `feat(security)` / `ci(security)` / `docs(security)` |
+| M5: Security | ✅ Done | 2026-11-19 | see git log, `feat(security)` / `ci(security)` / `docs(security)` |
 | M6: Observability | ⏳ Not started | | |
 | M7: Evals | ⏳ Not started | | |
 | M8: UI, docs and polish | ⏳ Not started | | |
@@ -300,7 +300,7 @@ Retrieval results on the 25-question set (k=5):
 | Injection in merchant evidence does not change the decision | ✅ `test_prompt_injection.py` (gullible stand-in model; removing the label or escaping fails 7 of 8 tests) |
 | Per-agent scopes enforced at the MCP layer | ✅ `test_agent_credentials.py` |
 | audit_log append-only | ✅ `test_postgres_store.py` (triggers) |
-| Security workflow is green | ⏳ Not verified: needs a run on GitHub. Locally: `pip-audit` clean, image builds and starts. gitleaks, Trivy and CodeQL were not run locally (not installed). |
+| Security workflow is green | ✅ Green on GitHub after two fixes (see Decisions): gitleaks, pip-audit, Trivy, CodeQL; CI also green. |
 
 Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 
@@ -308,6 +308,7 @@ Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 - HS256 with a shared secret (Cognito replaces it in M9). Signed per-agent service tokens for in-process MCP calls.
 - No free-text merchant field exists in the data model, so the injection test plants the payload in merchant name, carrier, tracking number and the customer narrative.
 - Deviation from the blueprint's `security.yml`: `uvx pip-audit` would audit its own environment, so the job audits the exported lockfile instead.
+- `security.yml` needed two fixes on its first real run: the blueprint's `trivy-action@0.28.0` does not exist (tags are `v`-prefixed; now `v0.36.0`), and Trivy found a fixable `zlib1g` HIGH (the image now runs `apt-get upgrade`) plus "secrets" that are a docstring in the anthropic SDK. Trivy now scans for vulnerabilities only; secrets are gitleaks' job and the image holds none. The uv cache is no longer left in the image.
 - Role is stored in the audit row's `arguments` rather than a new column (no schema migration).
 
 ### Known gaps
