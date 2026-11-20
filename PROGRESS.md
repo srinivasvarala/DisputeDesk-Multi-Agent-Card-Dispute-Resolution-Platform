@@ -7,7 +7,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M0: Scaffold | ✅ Done | 2026-11-19 | `e473ea0`, `c1098da` |
 | M1: Data and MCP servers | ✅ Done | 2026-11-19 | `5e295cf`, `27ecb5b`, `3b7fdb4`, `7850a87`, `d4d52e9` |
 | M2: RAG over dispute policies | ✅ Done | 2026-11-19 | `27fd98f`, `8a32400`, `0631988`, `1748131`, `ae83fc6`, `7e8f6a3`, `9c5d32c`, `7537998` |
-| M3: Multi-agent graph | ⏳ Not started | | |
+| M3: Multi-agent graph | ✅ Done (CI not yet run) | 2026-11-19 | `db8dfe8`, `3666e3e`, `0df42de`, `183817d`, `d095789`, `278f927`, `a7a348a`, `57183d1`, `6827e19` |
 | M4: Guardrails | ⏳ Not started | | |
 | M5: Security | ⏳ Not started | | |
 | M6: Observability | ⏳ Not started | | |
@@ -157,3 +157,61 @@ Retrieval results on the 25-question set (k=5):
 - `PolicyAnswer` quality with a real LLM is not yet evaluated (M7). Tests use a deterministic stand-in.
 - Audit rows store the raw question (synthetic data only); Presidio redaction is M4.
 - Code review (`/code-review since 27c0608`, 7 findings): fixed an empty/one-word quote passing as a citation, stored quotes not being the policy's literal text, audit failures masking the search result (now fail-closed) plus no audit row for the decision, the eval labelling plain hybrid as "rerank" when no reranker is configured, the bge query prefix applying to non-bge models, and `Tier C#`-style headings losing the `#`. Not reproducible: backslashes breaking `to_tsquery` (regression test added). `Priority #` -> `Priority` is correct CommonMark and was left alone.
+
+---
+
+## M3: Multi-agent graph ✅
+
+**Goal:** one dispute goes end-to-end through the agents.
+
+### Delivered
+- `graph/`: LangGraph over a Pydantic `DisputeState`. Flow: `intake -> router -> evidence -> policy -> resolution -> reviewer`, then `finalize` (low risk), or `request_approval -> human_gate -> finalize` (approval required), or `escalate`. The graph is built from injected nodes (`Nodes`), so the skeleton was built and tested on stubs first (`graph/stubs.py`) and real nodes replaced them one at a time. Conditional edges are pure functions in `graph/routing.py`.
+- **Reviewer loop:** the reviewer may send a draft back at most 2 times; the third "revise" escalates. A draft that itself says `escalate` skips review. Every revision is a new draft version (all kept).
+- **Human gate:** `interrupt()` pauses at a Postgres checkpoint; `Command(resume=...)` continues. Approval is its own node (`request_approval`, sets `pending_approval`) separate from the gate, because LangGraph re-runs an interrupted node from the top on resume. A human "no" escalates.
+- **Agents** (`agents/`), each with its own allowlist in one file (`allowlists.py`):
+  - `router_agent`: get_txn, get_profile. The LLM picks the reason code; **risk tier and approval requirement are plain Python** (`graph/rules.py`): HIGH if the merchant is high-risk or amount >= `HUMAN_APPROVAL_THRESHOLD_CENTS` ($500), MEDIUM for a medium-risk merchant or any fraud claim.
+  - `evidence_agent`: read-only tools (get_txn, list_txns, get_history, get_profile, get_dispute_rate, get_delivery_status). Which tools run is decided by code from the reason code; facts in the result are tool output, the model only writes the summary and a leaning.
+  - `policy_agent`: the existing M2 agent, wrapped. Its question is built only from structured fields (no customer text).
+  - `resolution_agent`: save_draft only. Cannot change status.
+  - `reviewer_agent`: no tools.
+  - `dispute_workflow` (no LLM): get_case, update_status; owns every status change.
+- **ToolBox** (`agents/toolbox.py`): tools run in-process through a real MCP client named after the agent, so the servers' audit rows carry the right actor. A call outside the allowlist is refused before reaching a server and is audited.
+- **Resilience** (`agents/resilience.py`): `call_with_retry` (timeout per attempt, exponential backoff, non-retryable errors) used by `ResilientLLM` (wraps any `LLMClient`), `ResilientSearch` (RAG) and `ToolBox`. Timeouts/retries come from settings.
+- **Structured outputs:** every agent returns a Pydantic model; `complete_json` validates, retries once with the error, then fails. Customer/merchant text is only ever escaped data in the user message.
+- **Audit:** every tool call (by the MCP servers) and every agent decision (`classify_dispute`, `assess_evidence`, `decide_dispute`, `review_draft`, `answer_policy_question`, `workflow_failed`) writes to `audit_log`, success or failure.
+- **API** (`api/`): `POST /disputes` (start an existing open case, 202, runs in background), `GET /disputes/{id}` (case status, workflow state, route, draft, review, revision count, path), `POST /disputes/{id}/approve` (`{approved, approver, note}`). 404 unknown case, 409 wrong state (already started, not waiting, already being processed), 422 bad body. A crashed run escalates the case and audits it.
+- **Fake LLM** (`agents/fake_llm.py`): deterministic, agent-aware; `LLM_PROVIDER=fake` runs the whole system offline. `scripts/run_disputes.py` drives N seeded disputes through a running API and approves the ones that pause.
+- Postgres checkpointer with an explicit type allowlist (`graph/serde.py`, derived by walking the state's types).
+- `seed --reset` now also clears workflow checkpoints (they are keyed by case id).
+- Tests: 239 unit, 53 integration (7 new in `tests/integration/test_dispute_graph.py`).
+
+### Acceptance
+| Criterion | Result |
+|---|---|
+| 5 seeded disputes complete end-to-end | ✅ Live run against uvicorn + Postgres + real retriever: 7 disputes (`scripts/run_disputes.py --count 7`), all `completed`; also a test (`test_five_seeded_disputes_complete_end_to_end`) |
+| A high-value dispute pauses for approval and resumes after `approve` | ✅ `pending_approval` at the pause, `resolved_*` after; test resumes on a brand-new runtime (as after a restart) and asserts no agent is called again |
+| Integration tests: happy path and reviewer-rejection path | ✅ Plus one-revision-then-approve, human decline, audit trail per agent |
+| Max 2 reviewer revisions | ✅ Third request escalates with exactly 3 drafts (unit + integration) |
+| Lint, mypy (strict), tests | ✅ ruff clean, mypy clean (55 files), 239 + 53 passing |
+| CI green | ⏳ Not pushed yet |
+
+### Decisions
+- **`POST /disputes` starts the workflow for an existing open case** (`{"case_id": "case_0001"}`). The blueprint did not say whether it creates cases; there is no create-case tool in the `cases` server, and cases come from the seed. Creating cases is a small addition if wanted.
+- **Tools in-process, not over stdio MCP:** same server objects and audit, no subprocesses, easy tests. The `ToolBox` interface lets a networked client replace it later.
+- **Sync graph, run on worker threads:** FastAPI runs the graph in a background task; no async rewrite of the agents.
+- **Approval rule** (my default, confirmed by "go"): HIGH risk (amount >= $500 or high-risk merchant) needs a human for accept and reject alike. The Evidence agent's `list_txns` was missing from its allowlist at first; the allowlist check caught it in the first test.
+- **Completion is read from `final_status`**, not from an empty `next`: a live poll showed LangGraph can checkpoint between nodes with no `next` yet, which briefly reported `completed`. Regression test added.
+- **`tool_index` runs its async lookup on its own thread**: the first live start crashed inside uvicorn's event loop (`asyncio.run` in a running loop); unit tests had missed it. Regression test added.
+- **`final_status` and `path` live in state** so the API and tests can show the route a case took.
+- New dependencies: `langgraph` + `langgraph-checkpoint-postgres` (graph runtime, interrupt/resume, Postgres checkpointer), `psycopg-pool` (checkpointer connections), `fastapi` + `uvicorn` (API), `httpx` dev-only (Starlette `TestClient`).
+
+### Known gaps / carried forward
+- **No refund cap or required-evidence check in code yet.** Only the approval threshold is enforced (router rules). The refund cap, per-agent allowlist enforcement at the guardrail layer, and PII redaction are M4 (`policy_rules.py`, `guardrails/interface.py`).
+- **No auth:** the `approver` name comes from the request body. JWT roles are M5.
+- **Single API process:** the "already being processed" guard is in memory. Several workers would need a database lock.
+- **Timeouts abandon, not cancel, a hung LLM or retrieval thread** (Python cannot kill a thread); the result is dropped. Tool calls do cancel (`anyio.fail_after`).
+- **A crashed run is escalated, not retried or resumable** through the API.
+- **Agent quality with a real model is untested** (fake LLM only); that is M7. Prompts have not been tuned.
+- Evidence facts for `get_history`/`get_dispute_rate` carry no `case_id`, so those audit rows are not filterable by case (they are by actor and time).
+- `OllamaClient` still does not close its HTTP client (carried from M0).
+- CI has not run on these commits yet.
