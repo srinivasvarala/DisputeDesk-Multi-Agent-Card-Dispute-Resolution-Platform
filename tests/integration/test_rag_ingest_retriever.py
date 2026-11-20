@@ -210,3 +210,36 @@ def test_model_mismatch_is_detected(rag_conn: psycopg.Connection, retriever: Ret
 def test_missing_index_is_reported(rag_conn: psycopg.Connection) -> None:
     with pytest.raises(RetrieverError, match="not found"):
         Retriever(rag_conn, FakeEmbedder(), table=TABLE).search("refund")
+
+
+class CountingReranker(FakeReranker):
+    def __init__(self) -> None:
+        self.pool_sizes: list[int] = []
+
+    def score(self, query: str, documents: Sequence[str]) -> list[float]:
+        self.pool_sizes.append(len(documents))
+        return super().score(query, documents)
+
+
+def test_rerank_pool_is_capped_at_top_n(rag_conn: psycopg.Connection, corpus: list[Chunk]) -> None:
+    ingest(rag_conn, FakeEmbedder(), corpus, table=TABLE)
+    reranker = CountingReranker()
+    retriever = Retriever(rag_conn, FakeEmbedder(), reranker, table=TABLE, rerank_top_n=4)
+    unreranked = retriever.search("merchant response deadline", k=10, rerank=False)
+
+    assert len(retriever.search("merchant response deadline", k=3)) == 3
+    assert reranker.pool_sizes == [4]  # top 4 fused candidates only
+
+    # The pool is never smaller than k, so every returned chunk carries a rerank score.
+    results = retriever.search("merchant response deadline", k=6)
+    assert reranker.pool_sizes[-1] == 6
+    assert all(r.rerank_score is not None for r in results)
+    # The reranked pool is exactly the top-6 fused candidates, reordered.
+    assert {(r.source, r.chunk_index) for r in results} == {
+        (r.source, r.chunk_index) for r in unreranked[:6]
+    }
+
+
+def test_rerank_top_n_must_be_positive(rag_conn: psycopg.Connection) -> None:
+    with pytest.raises(ValueError, match="rerank_top_n"):
+        Retriever(rag_conn, FakeEmbedder(), FakeReranker(), table=TABLE, rerank_top_n=0)

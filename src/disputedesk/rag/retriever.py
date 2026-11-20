@@ -6,7 +6,9 @@
    natural-language question rarely has every one of its words in a single chunk.
 3. Reciprocal rank fusion: score(d) = sum over lists of 1 / (rrf_k + rank). Rank-based, so the
    two lists' incomparable scores never need normalising.
-4. Optional cross-encoder rerank of the fused candidates.
+4. Optional cross-encoder rerank of the top `rerank_top_n` fused candidates. The cross-encoder
+   scores each (query, chunk) pair separately, so its cost grows with the pool size; RRF
+   already puts the right chunks near the top, so a small pool keeps most of the gain.
 
 Every result carries `source` and `section` so callers can cite it.
 
@@ -34,6 +36,7 @@ ChunkKey = tuple[str, int]
 
 DEFAULT_CANDIDATE_K = 20
 DEFAULT_RRF_K = 60  # the constant from the original RRF paper; damps the top ranks
+DEFAULT_RERANK_TOP_N = 10
 MAX_QUERY_CHARS = 1000
 
 
@@ -88,13 +91,17 @@ class Retriever:
         table: str = DEFAULT_TABLE,
         candidate_k: int = DEFAULT_CANDIDATE_K,
         rrf_k: int = DEFAULT_RRF_K,
+        rerank_top_n: int = DEFAULT_RERANK_TOP_N,
     ) -> None:
+        if rerank_top_n < 1:
+            raise ValueError("rerank_top_n must be at least 1")
         self._conn = conn
         self._embedder = embedder
         self._reranker = reranker
         self._table = sql.Identifier(check_table_name(table))
         self._candidate_k = candidate_k
         self._rrf_k = rrf_k
+        self._rerank_top_n = rerank_top_n
         self._index_checked = False
 
     def search(
@@ -139,6 +146,8 @@ class Retriever:
             for key in ordered
         ]
         if rerank and self._reranker is not None and results:
+            # Never rerank fewer than k, so every returned chunk has a rerank score.
+            results = results[: max(self._rerank_top_n, k)]
             scores = self._reranker.score(query, [r.rerank_text for r in results])
             if len(scores) != len(results):
                 raise RetrieverError(f"reranker returned {len(scores)} scores for {len(results)}")

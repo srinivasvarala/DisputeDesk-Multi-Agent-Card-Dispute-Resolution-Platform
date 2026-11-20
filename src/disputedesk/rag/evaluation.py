@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -137,6 +138,13 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="compare hybrid + rerank across these fastembed reranker models (repeatable)",
     )
+    parser.add_argument(
+        "--rerank-top-n",
+        type=int,
+        action="append",
+        default=[],
+        help="compare hybrid + rerank across these candidate pool sizes (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -144,7 +152,18 @@ def main(argv: list[str] | None = None) -> int:
     cases = load_cases(args.dataset)
     with connect() as conn:
         ingest(conn, embedder, load_corpus(Path(settings.policies_dir)))  # no-op if current
-        if args.reranker_model:
+        if args.rerank_top_n:
+            rerank = next(c for c in CONFIGS if c.rerank)
+            reranker = get_reranker(settings)
+            reports = [evaluate(Retriever(conn, embedder), cases, CONFIGS[2], k=args.k)]
+            for top_n in args.rerank_top_n:
+                retriever = Retriever(conn, embedder, reranker, rerank_top_n=top_n)
+                started = time.perf_counter()
+                report = evaluate(retriever, cases, rerank, k=args.k)
+                per_query = (time.perf_counter() - started) / len(cases)
+                name = f"rerank top {top_n} ({per_query:.1f}s/query)"
+                reports.append(report.model_copy(update={"config": name}))
+        elif args.reranker_model:
             rerank = next(c for c in CONFIGS if c.rerank)
             reports = [
                 evaluate(Retriever(conn, embedder), cases, CONFIGS[2], k=args.k)  # no rerank
