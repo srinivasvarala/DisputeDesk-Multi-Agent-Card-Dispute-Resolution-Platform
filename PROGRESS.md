@@ -15,7 +15,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M7.1: Fix defects found by the evals | ✅ Partly done: crashes, retrieval fixed; gate still red | 2026-11-20 | `900dd1f`, see git log `fix(agents)` / `docs(evals)` |
 | M7.2: Analyst confidence, rule-based escalation, cited letters | ✅ Partly done: gate still red on 3 of 9 | 2026-11-20 | `b73748f`, see git log `feat(agents)` / `docs(evals)` |
 | M7.3: Tools carry the facts the rulebook asks for | ✅ Done; gate red on 3 of 9 (decision accuracy 0.781, just under) | 2026-11-20 | `22bef81`, `b10bb31`, see git log `feat(data)` / `feat(agents)` / `docs(evals)` |
-| M8: UI, docs and polish | ⏳ Not started | | |
+| M8: UI, docs and polish | ✅ Done (demo GIF and a live UI run not done, see M8 gaps) | 2026-11-20 | `4fabc83`, `2004ee0`, see git log `docs` / `feat(ui)` |
 | M9: AWS deployment (phase 2) | ⏳ Not started | | |
 
 Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
@@ -468,3 +468,37 @@ Six findings; three fixed in `fix(agents)`: (1) an empty `EVAL_JUDGE_MODEL` / `E
 
 ### Deferred (later, not blocking M8)
 (a) Wire `check_input` into intake and widen the rails beyond regexes (guardrail catch rate stays 0.333 until then). (b) Not-as-described facts as data: merchant contact date and return tracking, which g25, g27 and g28 need. (c) Replace the forbidden-string leak check with a judge that distinguishes complying from refusing. (d) Separate judge model and repeat runs to measure variance. (e) Investigate g22 (accepted a duplicate whose twin charge was already refunded). (f) Re-run Promptfoo. (g) Give the CI job its `ANTHROPIC_API_KEY` secret, and decide whether a red gate should block merges.
+
+---
+
+## M8: UI, docs and polish ✅
+
+**Goal:** a repo a recruiter understands in 2 minutes.
+
+### Delivered
+- `GET /disputes?case_status=&limit=`: case list (`CaseSummary`), `disputes:read` scope, not audited (same as `GET /disputes/{id}`, per CLAUDE.md).
+- `ui/`: Streamlit reviewer. `ui/client.py` is a typed `httpx2` client over the API (tested with a mock transport); `ui/app.py` is the thin page: status filter (pending approval first), case facts, trace summary (route, risk tier, graph path, reviewer verdict), draft and letter, Start / Approve / Reject. Model output is shown as plain text, never as markdown.
+- `Makefile`: `setup` (creates `.env`, generates a 32+ char `JWT_SECRET` if missing, compose up, sync, seed, ingest), `seed`, `api`, `ui`, `test`.
+- README rewritten: problem, Mermaid architecture, 3-command quickstart, eval table (checked against `evals/results/latest.json`), threat-model link, limitations, what I'd do next.
+- ADRs 002 to 005: LangGraph, guardrails interface, hybrid RAG, MCP boundaries.
+
+### Acceptance
+| Criterion | Result |
+|---|---|
+| Lint, mypy (strict), unit tests | ✅ ruff clean, mypy clean (76 files), 383 unit tests passing (5 new for the UI client, 3 route-table cases and 1 list test for the API) |
+| UI shows list, trace, approve/reject | ⚠️ code and client tests only; **not yet run against a live API** (see gaps) |
+| Fresh clone runs with `make setup`, `make api`, `make ui` | ⚠️ `make -n setup` checked; the real run was not done |
+| README complete | ✅ |
+
+### Decisions
+- The UI goes through the API, never the database, so scopes and audit apply.
+- The UI mints its own approver token from `JWT_SECRET` (local demo only; Cognito in M9). It means the UI process holds the signing secret.
+- `streamlit` is in its own `ui` dependency group so the API image stays lean.
+- The list endpoint returns case status only, not workflow state (that needs a checkpoint read per case); the detail view has it.
+- Added a Makefile because the blueprint's `make seed` did not exist.
+
+### Known gaps
+- Not run end to end: the UI against a live API and database, and `make setup` from a clean clone.
+- No demo GIF (blueprint asked for one).
+- The list is unpaginated beyond `limit`; no auto-refresh while a case runs (a Refresh button instead).
+- The 60 s `llm_timeout_seconds` against `DEFAULT_MAX_TOKENS` 8192 flagged in the M7.3 review is still open.
