@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from opentelemetry import metrics, trace
-from opentelemetry.trace import Span, SpanContext
+from opentelemetry.trace import Span, SpanContext, Status, StatusCode
 
 from disputedesk.config import Settings
 
@@ -98,6 +98,25 @@ def _tracer() -> trace.Tracer:
 
 
 @contextmanager
+def span_scope(name: str, attributes: dict[str, Any]) -> Iterator[Span]:
+    """Start a span without exporting exception messages (they can echo merchant or customer
+    text). An error is recorded as its type name only; a `PermissionError` (a guardrail denial,
+    which is the guardrail working) is not an error at all."""
+    with _tracer().start_as_current_span(
+        name, attributes=attributes, record_exception=False, set_status_on_exception=False
+    ) as span:
+        try:
+            yield span
+        except PermissionError:
+            span.set_attribute("outcome", "denied")
+            raise
+        except Exception as exc:
+            span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            span.set_attribute("error.type", type(exc).__name__)
+            raise
+
+
+@contextmanager
 def case_span(
     name: str,
     case_id: str,
@@ -139,7 +158,7 @@ def agent_span(agent: str, *, risk_tier: str | None = None) -> Iterator[Span]:
         attrs["risk_tier"] = tier
     started = time.monotonic()
     try:
-        with _tracer().start_as_current_span(f"agent.{agent}", attributes=attrs) as span:
+        with span_scope(f"agent.{agent}", attrs) as span:
             yield span
     finally:
         record_agent_latency(agent, (time.monotonic() - started) * 1000)
@@ -159,7 +178,7 @@ def tool_span(tool: str, agent: str, case_id: str | None) -> Iterator[Span]:
     attrs: dict[str, str] = {"agent": agent, "tool": tool}
     if case_id:
         attrs["case_id"] = case_id
-    with _tracer().start_as_current_span(f"tool.{tool}", attributes=attrs) as span:
+    with span_scope(f"tool.{tool}", attrs) as span:
         yield span
 
 

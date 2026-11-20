@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
+from opentelemetry import trace
 from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.trace import StatusCode
 
+from disputedesk.agents.toolbox import ToolBox, ToolCallError, ToolDeniedError, tool_index
+from disputedesk.api import runtime as runtime_module
 from disputedesk.api.runtime import Runtime, build_runtime
 from disputedesk.api.schemas import ApprovalRequest
 from disputedesk.graph.serde import checkpoint_serde
+from disputedesk.mcp_servers.common.audit import AuditedMCPServer
 from disputedesk.mcp_servers.common.store import InMemoryStore
+from disputedesk.observability.otel import CaseTotals
 from tests.conftest import make_settings
 from tests.graph_helpers import TEST_JWT_SECRET, StubRetriever, fake_llm, needs_approval
 from tests.otel_helpers import install_test_sdk
@@ -193,3 +200,75 @@ def test_a_paused_and_resumed_case_adds_its_cost_up_and_records_it_once(
     assert final["llm_calls"] == len(lf.generations) > 0  # the first run's calls are included
     assert final["cost_usd"] >= outputs[0]["cost_usd"] > 0
     assert not runtime._totals and not runtime._trace_roots  # cleaned up once the case is done
+
+
+def test_no_sdk_means_no_langfuse_trace_rather_than_a_shared_zero_id(
+    store: InMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @contextmanager
+    def no_sdk_span(*_: Any, totals: CaseTotals | None = None, **__: Any) -> Iterator[Any]:
+        yield trace.INVALID_SPAN, totals or CaseTotals()  # what OTEL_ENABLED=false gives
+
+    monkeypatch.setattr(runtime_module, "case_span", no_sdk_span)
+    lf = FakeLangfuse()
+    runtime = _runtime(store, lf)
+    settings = make_settings(jwt_secret=TEST_JWT_SECRET)
+    case = next(c for c in store.list_cases() if not needs_approval(c, store, settings))
+    runtime.claim_start(case.case_id)
+    runtime.run(case.case_id)
+
+    # `_drive` made no trace-level update (those carry the case id as session), and nothing
+    # was written to the all-zero id.
+    assert not [t for t in lf.traces if t.get("session_id") == case.case_id]
+    assert not [t for t in lf.traces if t.get("id") == "0" * 32]
+
+
+def test_telemetry_failure_does_not_fail_the_case(
+    store: InMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_: Any, **__: Any) -> None:
+        raise RuntimeError("metrics backend down")
+
+    monkeypatch.setattr(runtime_module, "record_case_run", boom)
+    runtime, case_id = _run_low_risk_case(store)  # must not raise
+
+    assert not any(e.tool == "workflow_failed" for e in store.audit)
+    assert case_id not in runtime._active
+
+
+@pytest.fixture
+def toolbox(
+    store: InMemoryStore,
+    txn_server: AuditedMCPServer,
+    merchant_server: AuditedMCPServer,
+    cases_server: AuditedMCPServer,
+) -> ToolBox:
+    return ToolBox(
+        agent="evidence_agent",
+        allowed=frozenset({"get_txn"}),
+        tools=tool_index([txn_server, merchant_server, cases_server]),
+        audit=store,
+        timeout=5,
+        retries=0,
+    )
+
+
+def test_guardrail_denial_is_not_an_error_span(toolbox: ToolBox) -> None:
+    with pytest.raises(ToolDeniedError):
+        toolbox.call("save_draft", {"case_id": "case_0001"})
+    span = _by_name(_SPANS.get_finished_spans(), "tool.save_draft")[0]
+
+    assert span.status.status_code != StatusCode.ERROR
+    assert span.attributes is not None and span.attributes["outcome"] == "denied"
+    assert not [e for e in span.events if e.name == "exception"]
+
+
+def test_error_spans_carry_the_exception_type_not_its_message(toolbox: ToolBox) -> None:
+    with pytest.raises(ToolCallError):
+        toolbox.call("get_txn", {"txn_id": "txn_999999"})
+    span = _by_name(_SPANS.get_finished_spans(), "tool.get_txn")[0]
+
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.status.description == "ToolCallError"
+    # no exception event, so no message text leaves the process
+    assert not [e for e in span.events if e.name == "exception"]

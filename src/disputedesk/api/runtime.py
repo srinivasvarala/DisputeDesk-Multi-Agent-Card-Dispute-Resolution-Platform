@@ -21,7 +21,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
-from opentelemetry.trace import SpanContext, Status, StatusCode
+from opentelemetry.trace import Span, SpanContext, Status, StatusCode
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -175,8 +175,11 @@ class Runtime:
                 totals=self._totals.setdefault(case_id, CaseTotals()),
             ) as (span, totals):
                 self._trace_roots.setdefault(case_id, span.get_span_context())
-                trace_id = format(span.get_span_context().trace_id, "032x")
-                if span_name == "case.run":
+                ctx = span.get_span_context()
+                # No SDK (OTEL_ENABLED unset) means an all-zero id: skip Langfuse rather than
+                # write every case into one trace.
+                trace_id = format(ctx.trace_id, "032x") if ctx.is_valid else None
+                if trace_id and span_name == "case.run":
                     update_trace(
                         self.langfuse, trace_id, case_id=case_id, input={"case_id": case_id}
                     )
@@ -188,26 +191,38 @@ class Runtime:
                     logger.exception("workflow failed for %s", case_id)
                     self._fail(case_id, exc)
                 else:
-                    state = _as_state(result)
-                    tier = str(state.route.risk_tier) if state.route else None
-                    span.set_attribute("case.revision_loops", state.revision_count)
-                    if tier:
-                        span.set_attribute("risk_tier", tier)
                     paused = isinstance(result, dict) and "__interrupt__" in result
-                    if not paused:  # one data point per case, not per run segment
-                        record_case_run(totals, state.revision_count, tier)
-                    update_trace(
-                        self.langfuse,
-                        trace_id,
-                        case_id=case_id,
-                        output=_run_summary(state, result, totals),
-                    )
+                    try:  # telemetry must never decide the case outcome
+                        self._record_run(span, trace_id, case_id, result, totals, paused)
+                    except Exception:
+                        logger.exception("could not record telemetry for %s", case_id)
         finally:
             if not paused:  # finished or failed: nothing will resume this trace or its totals
                 self._trace_roots.pop(case_id, None)
                 self._totals.pop(case_id, None)
             with self._lock:
                 self._active.discard(case_id)
+
+    def _record_run(
+        self,
+        span: Span,
+        trace_id: str | None,
+        case_id: str,
+        result: Any,
+        totals: CaseTotals,
+        paused: bool,
+    ) -> None:
+        state = _as_state(result)
+        tier = str(state.route.risk_tier) if state.route else None
+        span.set_attribute("case.revision_loops", state.revision_count)
+        if tier:
+            span.set_attribute("risk_tier", tier)
+        if not paused:  # one data point per case, not per run segment
+            record_case_run(totals, state.revision_count, tier)
+        if trace_id:
+            update_trace(
+                self.langfuse, trace_id, case_id=case_id, output=_run_summary(state, result, totals)
+            )
 
     def _fail(self, case_id: str, exc: Exception) -> None:
         """Do not leave a crashed case in review: escalate it and say why in the audit log."""

@@ -17,12 +17,10 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from opentelemetry import trace
-
 from disputedesk.config import Settings
 from disputedesk.guardrails.redaction import get_redactor
 from disputedesk.llm import LLMClient, LLMResponse, Message
-from disputedesk.observability.otel import current_case, trace_ids
+from disputedesk.observability.otel import current_case, span_scope, trace_ids
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +86,7 @@ class TracedLLM:
         case = current_case()
         agent = case.agent if case and case.agent else "unknown"
         start = datetime.now(UTC)
-        with trace.get_tracer("disputedesk").start_as_current_span(
-            f"llm.{agent}", attributes={"agent": agent, "llm.provider": self.provider}
-        ) as span:
+        with span_scope(f"llm.{agent}", {"agent": agent, "llm.provider": self.provider}) as span:
             if case and case.case_id:
                 span.set_attribute("case_id", case.case_id)
             if case and case.risk_tier:
