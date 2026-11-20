@@ -486,7 +486,7 @@ Six findings; three fixed in `fix(agents)`: (1) an empty `EVAL_JUDGE_MODEL` / `E
 | Criterion | Result |
 |---|---|
 | Lint, mypy (strict), unit tests | ✅ ruff clean, mypy clean (76 files), 383 unit tests passing (5 new for the UI client, 3 route-table cases and 1 list test for the API) |
-| UI shows list, trace, approve/reject | ⚠️ code and client tests only; **not yet run against a live API** (see gaps) |
+| UI shows list, trace, approve/reject | ✅ Run in Chrome against the live API (scripted model): `case_0021` (fraud, $1,351.14, high risk) started, paused at the human gate, approved in the UI, resolved; audit shows `start_dispute`, the status changes and `approve_dispute` by `user:reviewer-ui`. On the real model two high-risk cases (`case_0013`, `case_0018`) escalated after reviewer revisions, so the gate was not reached there |
 | Fresh clone runs with `make setup`, `make api`, `make ui` | ⚠️ `make -n setup` checked; the real run was not done |
 | README complete | ✅ |
 
@@ -498,7 +498,8 @@ Six findings; three fixed in `fix(agents)`: (1) an empty `EVAL_JUDGE_MODEL` / `E
 - Added a Makefile because the blueprint's `make seed` did not exist.
 
 ### Known gaps
-- Not run end to end: the UI against a live API and database, and `make setup` from a clean clone.
-- No demo GIF (blueprint asked for one).
+- `make setup` from a clean clone not run. No demo GIF saved (13 frames were recorded in the browser but not exported).
+- The approval note is sent to the API but not stored in the audit row (only role and approved are); the UI label no longer claims it is.
+- With the real model, high-risk cases tend to escalate before the human gate (2 of 2 tried), consistent with the eval results.
 - The list is unpaginated beyond `limit`; no auto-refresh while a case runs (a Refresh button instead).
 - The 60 s `llm_timeout_seconds` against `DEFAULT_MAX_TOKENS` 8192 flagged in the M7.3 review is still open.

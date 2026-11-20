@@ -119,7 +119,7 @@ def render_actions(client: ReviewerClient, view: DisputeView) -> None:
         with st.container(border=True):
             st.markdown("##### Your decision")
             st.warning("Policy requires a human to approve this case before it is resolved.")
-            note = st.text_input("Note for the audit log (optional)", max_chars=1_000)
+            note = st.text_input("Note (optional)", max_chars=1_000)
             approve, reject, _ = st.columns([1, 1, 3])
             if approve.button("Approve", type="primary", use_container_width=True):
                 client.decide(view.case_id, approved=True, note=note)
