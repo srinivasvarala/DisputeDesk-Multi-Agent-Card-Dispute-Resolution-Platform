@@ -47,6 +47,27 @@ def make_langfuse(settings: Settings) -> Any | None:
     )
 
 
+def update_trace(
+    langfuse: Any | None,
+    trace_id: str,
+    *,
+    case_id: str,
+    input: dict[str, Any] | None = None,
+    output: dict[str, Any] | None = None,
+) -> None:
+    """Set the trace-level Input / Output shown at the top of a Langfuse trace.
+
+    Callers pass facts about the run (ids, decision, path, cost), never customer-written text:
+    prompts and replies live on the generations, redacted.
+    """
+    if langfuse is None:
+        return
+    try:
+        langfuse.trace(id=trace_id, session_id=case_id, input=input, output=output)
+    except Exception:
+        logger.warning("langfuse trace update failed", exc_info=True)
+
+
 class TracedLLM:
     def __init__(
         self,

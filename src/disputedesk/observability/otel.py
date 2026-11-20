@@ -99,17 +99,22 @@ def _tracer() -> trace.Tracer:
 
 @contextmanager
 def case_span(
-    name: str, case_id: str, *, parent: trace.SpanContext | None = None
+    name: str,
+    case_id: str,
+    *,
+    parent: trace.SpanContext | None = None,
+    totals: CaseTotals | None = None,
 ) -> Iterator[tuple[Span, CaseTotals]]:
     """Root span of one run of a case (`case.run` / `case.resume`).
 
     With `parent`, the span joins that earlier trace, so a case paused for approval and resumed
-    later is still one trace.
+    later is still one trace. Pass the same `totals` to every run of a case so cost and call
+    counts add up across a pause.
     """
     ctx = None
     if parent is not None and parent.is_valid:
         ctx = trace.set_span_in_context(trace.NonRecordingSpan(parent))
-    totals = CaseTotals()
+    totals = totals or CaseTotals()
     token = _case.set(CaseContext(case_id=case_id, totals=totals))
     try:
         with _tracer().start_as_current_span(

@@ -354,7 +354,7 @@ Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 | Cost per case is visible | ✅ Langfuse shows $0.028028 for `case_0004` (8,590 tokens); `case.cost_usd` on the root span and as a metric. |
 | Screenshot committed to `docs/` | ✅ [Langfuse trace](docs/img/langfuse-trace.jpg), [Langfuse dashboard](docs/img/langfuse-dashboard.jpg), [Jaeger trace](docs/img/jaeger-trace.jpg) |
 
-Tests: 330 unit, 58 integration passing; ruff and mypy clean.
+Tests: 331 unit, 58 integration passing; ruff and mypy clean.
 
 ### Decisions
 - Two UIs, one trace id (ADR-001 kept): Jaeger for the full span tree, Langfuse for prompts, tokens and cost. Langfuse v2 has no OTLP ingest, so generations go through the v2 SDK (`langfuse<3`) with the OTel trace id as the Langfuse trace id.
@@ -362,12 +362,11 @@ Tests: 330 unit, 58 integration passing; ruff and mypy clean.
 - `risk_tier` on node spans comes from the checkpointed state, so it survives a pause and resume.
 - `call_with_retry` copies the caller's context into its worker thread; without that every tool and LLM span would be orphaned.
 - New dependencies: `langfuse<3` (v2 server), `opentelemetry-sdk` (moved from dev), `opentelemetry-exporter-otlp-proto-http`, `-instrumentation-fastapi`, `-instrumentation-psycopg`.
+- Langfuse trace-level Input is `{case_id}` and Output is a summary of the run (outcome, decision, reason code, risk tier, revision loops, path, LLM calls, cost). It holds facts only; the draft letter and rationale (customer-derived text) stay out. Cost, call count and revision loops add up across a pause, and `case.cost_usd` / `case.revision_loops` are recorded once per case, when it finishes (not per run segment).
 - Prices come from the Claude API price list (`claude-sonnet-5-5`: $2 / $10 per million tokens); cache-read tokens are not priced separately (no caching is used).
 
 ### Known gaps
 - The trace of a resumed case is only joined while the API process lives: the first trace id is kept in memory, so after a restart a resume starts a new trace.
-- `case.cost_usd` is recorded per run segment, so a case that pauses and resumes is counted as two points.
-- Langfuse trace-level Input/Output show `null` (only generations carry content).
 - Jaeger stores traces in memory; they are lost when the container restarts. No Prometheus/Grafana is run; metrics are only exposed at `:8889`.
 - No alerting, and no saved custom Langfuse dashboard beyond the built-in one.
 - Guardrail `check_input`/`check_output` still not wired into intake/finalize (carried from M4), so the trigger rate only counts the checks that exist today (tool-call rules).

@@ -148,6 +148,14 @@ def test_langfuse_generations_use_the_otel_trace_id_and_are_redacted(
     assert {g["trace_id"] for g in lf.generations} == {trace_id}
     assert {t["id"] for t in lf.traces} == {trace_id}
     assert all(t["session_id"] == case.case_id for t in lf.traces)
+    # The trace-level Input / Output are set too (facts about the run, not customer text).
+    assert any(t.get("input") == {"case_id": case.case_id} for t in lf.traces)
+    outputs = [t["output"] for t in lf.traces if t.get("output")]
+    assert len(outputs) == 1
+    out = outputs[0]
+    assert out["outcome"] and out["decision"] and out["path"][0] == "intake"
+    assert out["llm_calls"] == len(lf.generations) and out["cost_usd"] > 0
+    assert "letter" not in out and "rationale" not in out
     first = lf.generations[0]
     assert first["usage"]["total_cost"] > 0 and first["usage"]["unit"] == "TOKENS"
     assert first["name"] != "unknown"
@@ -165,3 +173,23 @@ def test_resume_after_approval_joins_the_same_trace(store: InMemoryStore) -> Non
     spans = _SPANS.get_finished_spans()
     assert len({s.context.trace_id for s in spans}) == 1
     assert _by_name(spans, "case.run") and _by_name(spans, "case.resume")
+
+
+def test_a_paused_and_resumed_case_adds_its_cost_up_and_records_it_once(
+    store: InMemoryStore,
+) -> None:
+    lf = FakeLangfuse()
+    runtime = _runtime(store, lf)
+    settings = make_settings(jwt_secret=TEST_JWT_SECRET)
+    case = next(c for c in store.list_cases() if needs_approval(c, store, settings))
+    runtime.claim_start(case.case_id)
+    runtime.run(case.case_id)
+    runtime.claim_resume(case.case_id)
+    runtime.resume(case.case_id, ApprovalRequest(approved=True, note="ok"), "approver-1")
+
+    outputs = [t["output"] for t in lf.traces if t.get("output")]
+    final = outputs[-1]
+    assert outputs[0]["outcome"] == "awaiting_approval"
+    assert final["llm_calls"] == len(lf.generations) > 0  # the first run's calls are included
+    assert final["cost_usd"] >= outputs[0]["cost_usd"] > 0
+    assert not runtime._totals and not runtime._trace_roots  # cleaned up once the case is done

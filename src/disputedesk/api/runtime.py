@@ -49,8 +49,8 @@ from disputedesk.mcp_servers.common.store import (
 )
 from disputedesk.mcp_servers.merchant import server as merchant_server
 from disputedesk.mcp_servers.transactions import server as transactions_server
-from disputedesk.observability.langfuse import make_langfuse
-from disputedesk.observability.otel import case_span, record_case_run
+from disputedesk.observability.langfuse import make_langfuse, update_trace
+from disputedesk.observability.otel import CaseTotals, case_span, record_case_run
 from disputedesk.rag.retriever import Retriever
 from disputedesk.security.agent_tokens import CredentialIssuer, CredentialVerifier
 
@@ -81,6 +81,8 @@ class Runtime:
     # Trace of each case's first run, so a resume after human approval joins the same trace.
     # In memory: after an API restart a resume starts a new trace (known gap, see PROGRESS.md).
     _trace_roots: dict[str, SpanContext] = field(default_factory=dict)
+    _totals: dict[str, CaseTotals] = field(default_factory=dict)  # cost etc. across a pause
+    langfuse: Any | None = None  # Langfuse client for trace-level input/output
 
     # --- reading -------------------------------------------------------------------------
 
@@ -164,12 +166,20 @@ class Runtime:
     def _drive(
         self, case_id: str, graph_input: DisputeState | Command[Any], span_name: str
     ) -> None:
+        paused = False
         try:
-            with case_span(span_name, case_id, parent=self._trace_roots.get(case_id)) as (
-                span,
-                totals,
-            ):
+            with case_span(
+                span_name,
+                case_id,
+                parent=self._trace_roots.get(case_id),
+                totals=self._totals.setdefault(case_id, CaseTotals()),
+            ) as (span, totals):
                 self._trace_roots.setdefault(case_id, span.get_span_context())
+                trace_id = format(span.get_span_context().trace_id, "032x")
+                if span_name == "case.run":
+                    update_trace(
+                        self.langfuse, trace_id, case_id=case_id, input={"case_id": case_id}
+                    )
                 try:
                     result = self.graph.invoke(graph_input, _config(case_id))
                 except Exception as exc:
@@ -183,8 +193,19 @@ class Runtime:
                     span.set_attribute("case.revision_loops", state.revision_count)
                     if tier:
                         span.set_attribute("risk_tier", tier)
-                    record_case_run(totals, state.revision_count, tier)
+                    paused = isinstance(result, dict) and "__interrupt__" in result
+                    if not paused:  # one data point per case, not per run segment
+                        record_case_run(totals, state.revision_count, tier)
+                    update_trace(
+                        self.langfuse,
+                        trace_id,
+                        case_id=case_id,
+                        output=_run_summary(state, result, totals),
+                    )
         finally:
+            if not paused:  # finished or failed: nothing will resume this trace or its totals
+                self._trace_roots.pop(case_id, None)
+                self._totals.pop(case_id, None)
             with self._lock:
                 self._active.discard(case_id)
 
@@ -203,6 +224,21 @@ class Runtime:
             )
         except Exception:
             logger.exception("could not escalate failed case %s", case_id)
+
+
+def _run_summary(state: DisputeState, result: Any, totals: CaseTotals) -> dict[str, Any]:
+    """Facts about how a run ended, for the Langfuse trace output. No free text from the case."""
+    paused = isinstance(result, dict) and "__interrupt__" in result
+    return {
+        "outcome": "awaiting_approval" if paused else str(state.final_status or "finished"),
+        "decision": str(state.draft.decision) if state.draft else None,
+        "reason_code": str(state.route.reason_code) if state.route else None,
+        "risk_tier": str(state.route.risk_tier) if state.route else None,
+        "revision_loops": state.revision_count,
+        "path": state.path,
+        "llm_calls": totals.llm_calls,
+        "cost_usd": round(totals.cost_usd, 6),
+    }
 
 
 def _as_state(result: Any) -> DisputeState:
@@ -254,7 +290,7 @@ def build_runtime(
         retries=settings.tool_max_retries,
         issuer=issuer,
     )
-    return Runtime(graph=graph, store=store, failure_tools=failure_tools)
+    return Runtime(graph=graph, store=store, failure_tools=failure_tools, langfuse=langfuse)
 
 
 @contextmanager
