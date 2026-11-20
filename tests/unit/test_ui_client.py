@@ -73,3 +73,14 @@ def test_format_helpers() -> None:
     )
     assert format_path([]) == "(not started)"
     assert money(123456) == "$1,234.56"
+
+
+def test_badges_cover_every_status_and_decision() -> None:
+    from disputedesk.db.models import Decision
+    from disputedesk.ui.client import badge, decision_color, node_color, pretty, status_color
+
+    assert {status_color(s) for s in CaseStatus}
+    assert {decision_color(d) for d in Decision}
+    assert node_color("escalate") == "red" and node_color("router") == "blue"
+    assert badge("router", "blue") == ":blue-badge[router]"
+    assert pretty("pending_approval") == "Pending approval"

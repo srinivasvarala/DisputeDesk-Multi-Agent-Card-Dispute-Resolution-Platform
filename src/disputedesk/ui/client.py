@@ -7,7 +7,7 @@ import httpx2 as httpx
 from pydantic import TypeAdapter
 
 from disputedesk.api.schemas import Accepted, CaseSummary, DisputeView
-from disputedesk.db.models import CaseStatus
+from disputedesk.db.models import CaseStatus, Decision
 
 _CASES = TypeAdapter(list[CaseSummary])
 
@@ -72,3 +72,37 @@ def format_path(path: list[str]) -> str:
 
 def money(amount_cents: int) -> str:
     return f"${amount_cents / 100:,.2f}"
+
+
+def pretty(value: str) -> str:
+    """`pending_approval` -> `Pending approval`."""
+    return value.replace("_", " ").capitalize()
+
+
+def badge(text: str, color: str) -> str:
+    """Streamlit badge markup. `text` must be one of our own constants, never model output."""
+    return f":{color}-badge[{text}]"
+
+
+_STATUS_COLORS = {
+    CaseStatus.OPEN: "gray",
+    CaseStatus.IN_REVIEW: "blue",
+    CaseStatus.PENDING_APPROVAL: "orange",
+    CaseStatus.ESCALATED: "red",
+    CaseStatus.RESOLVED_ACCEPTED: "green",
+    CaseStatus.RESOLVED_REJECTED: "violet",
+}
+_DECISION_COLORS = {Decision.ACCEPT: "green", Decision.REJECT: "red", Decision.ESCALATE: "orange"}
+_NODE_COLORS = {"escalate": "red", "finalize": "green", "human_gate": "orange"}
+
+
+def status_color(status: CaseStatus) -> str:
+    return _STATUS_COLORS[status]
+
+
+def decision_color(decision: Decision) -> str:
+    return _DECISION_COLORS[decision]
+
+
+def node_color(node: str) -> str:
+    return _NODE_COLORS.get(node, "blue")
