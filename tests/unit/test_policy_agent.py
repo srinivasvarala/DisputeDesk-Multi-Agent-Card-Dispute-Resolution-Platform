@@ -188,7 +188,7 @@ def test_answer_has_citations_and_writes_one_audit_row() -> None:
     ]
     assert entry.case_id == "CASE-0001"
     assert entry.outcome == AuditOutcome.OK
-    assert entry.arguments == {"query": "What is the automated refund limit?", "k": 5}
+    assert entry.arguments == {"query": "What is the automated refund limit?", "k": 8}
     assert entry.created_at == NOW
 
 

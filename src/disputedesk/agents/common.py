@@ -18,6 +18,10 @@ from disputedesk.mcp_servers.common.store import AuditSink
 
 AUDIT_SERVER = "agents"
 MAX_ATTEMPTS = 2
+# Roomy on purpose: a truncated reply is a crashed case. Haiku 5.5 spends hidden reasoning tokens
+# against max_tokens (a 450-token JSON answer used about 1,750), so 1024 failed on 20 of 40 golden
+# cases and 2048 still failed on 5 (M7 evals). Only tokens actually used are billed.
+DEFAULT_MAX_TOKENS = 8192
 
 
 class AgentOutputError(RuntimeError):
@@ -45,7 +49,7 @@ def complete_json[T: BaseModel](
     system: str,
     user: str,
     schema: type[T],
-    max_tokens: int = 1024,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
     check: Callable[[T], None] | None = None,
 ) -> T:
     """Ask for one JSON object matching `schema`. On bad output, retry once with the error.

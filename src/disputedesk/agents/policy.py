@@ -26,6 +26,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
+from disputedesk.agents.common import DEFAULT_MAX_TOKENS
 from disputedesk.db.models import AuditEntry, AuditOutcome
 from disputedesk.llm import LLMClient, LLMError, Message
 from disputedesk.mcp_servers.common.store import AuditSink
@@ -180,7 +181,7 @@ class PolicyAgent:
         llm: LLMClient,
         audit: AuditSink,
         *,
-        k: int = 5,
+        k: int = 8,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._retriever = retriever
@@ -223,7 +224,9 @@ class PolicyAgent:
         messages = [Message(role="user", content=build_user_message(question, chunks))]
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
-                reply = self._llm.complete(system=SYSTEM_PROMPT, messages=messages, max_tokens=1024)
+                reply = self._llm.complete(
+                    system=SYSTEM_PROMPT, messages=messages, max_tokens=DEFAULT_MAX_TOKENS
+                )
             except LLMError as exc:
                 raise PolicyAgentError(f"LLM call failed: {exc}") from exc
             try:

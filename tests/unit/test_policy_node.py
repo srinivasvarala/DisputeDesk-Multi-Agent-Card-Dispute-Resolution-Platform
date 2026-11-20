@@ -65,3 +65,42 @@ def test_question_has_no_untrusted_text() -> None:
     assert "$1,234.56" in q
     assert "fraud" in q
     assert "human approval" in q
+
+
+def _question(reason: ReasonCode, *, channel: str = "online", approval: bool = False) -> str:
+    facts = CaseFacts(
+        txn_id="txn_000001",
+        customer_id="cus_0001",
+        amount_cents=5_000,
+        claimed_reason=reason,
+        narrative="n",
+    )
+    route = Route(
+        reason_code=reason,
+        risk_tier=RiskTier.LOW,
+        approval_required=approval,
+        rationale="r",
+    )
+    evidence = _stub_evidence()
+    txn = evidence.transaction.model_copy(update={"channel": channel})
+    return policy_question(facts, route, evidence.model_copy(update={"transaction": txn}))
+
+
+@pytest.mark.parametrize(
+    ("reason", "channel", "topic"),
+    [
+        (ReasonCode.NOT_RECEIVED, "online", "delivery proof"),
+        (ReasonCode.FRAUD, "online", "Card-Absent Fraud (F10)"),
+        (ReasonCode.FRAUD, "card_present", "Card-Present Fraud (F11)"),
+        (ReasonCode.DUPLICATE, "online", "Duplicate Processing (P30)"),
+        (ReasonCode.NOT_AS_DESCRIBED, "online", "return requirements"),
+    ],
+)
+def test_question_names_the_rulebook_topics_of_the_reason_code(
+    reason: ReasonCode, channel: str, topic: str
+) -> None:
+    """M7 baseline: a generic question retrieved the overview and approval documents instead
+    of the reason-code rules, so almost every case was escalated."""
+    q = _question(reason, channel=channel)
+    assert topic in q
+    assert "escalation triggers" in q  # approval rules still apply to every reason code

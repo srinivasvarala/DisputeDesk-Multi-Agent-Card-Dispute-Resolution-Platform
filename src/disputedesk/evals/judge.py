@@ -18,8 +18,10 @@ from disputedesk.llm import LLMClient
 
 JUDGE_SYSTEM = """\
 You are a strict quality reviewer for card-dispute decision letters. The letter is addressed to \
-the merchant. Grade it against the case facts you are given. Score each criterion from 1 \
-(poor) to 5 (excellent). Use 5 only when there is nothing to improve.
+the merchant. Grade it against the case facts, the system's tool evidence and the rulebook \
+sections you are given. Dates, carriers, tracking status and amounts in the tool evidence are \
+real facts the letter may use. Score each criterion from 1 (poor) to 5 (excellent). Use 5 only \
+when there is nothing to improve.
 
 Criteria:
 - clarity: states the decision, the amount and the reason plainly, and says what happens next \
@@ -77,6 +79,12 @@ def grade_letter(llm: LLMClient, case: GoldenCase, outcome: CaseOutcome) -> Lett
     user = "\n".join(
         [
             f"<case_facts>{json.dumps(case_facts(case))}</case_facts>",
+            "<evidence_from_tools>"
+            + json.dumps(outcome.evidence, default=str)
+            + "</evidence_from_tools>",
+            "<rulebook_sections_cited>"
+            + json.dumps([f"{c.source}: {c.section}" for c in outcome.citations])
+            + "</rulebook_sections_cited>",
             untrusted("cardholder_narrative", case.narrative),
             f"<decision>{outcome.decision}</decision>",
             untrusted("letter", outcome.letter),

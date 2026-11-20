@@ -233,6 +233,9 @@ class Runtime:
             "workflow_failed", case_id, {}, outcome=AuditOutcome.ERROR, error=type(exc).__name__
         )
         try:
+            case = self.store.get_case(case_id)
+            if case is not None and case.status == CaseStatus.ESCALATED:
+                return  # already escalated (the crash came after it): moving again is invalid
             self.failure_tools.call(
                 "update_status",
                 {"case_id": case_id, "new_status": CaseStatus.ESCALATED, "reason": reason},

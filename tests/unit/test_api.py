@@ -184,6 +184,33 @@ def test_a_crashed_run_escalates_the_case(store: InMemoryStore, settings: Settin
     assert failures[0].case_id == case_id
 
 
+def test_failing_an_already_escalated_case_does_not_error(
+    store: InMemoryStore, settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    """M7 baseline: a crash after the case was escalated made `_fail` try escalated -> escalated,
+    which the state machine rejects, and logged a second traceback."""
+    llm, _ = fake_llm()
+    runtime = build_runtime(
+        settings=settings,
+        llm=llm,
+        retriever=StubRetriever(),
+        store=store,
+        checkpointer=InMemorySaver(),
+    )
+    case_id = open_case(store, settings, approval=False)
+    runtime.failure_tools.call(
+        "update_status", {"case_id": case_id, "new_status": "in_review", "reason": "test"}
+    )
+    runtime.failure_tools.call(
+        "update_status", {"case_id": case_id, "new_status": "escalated", "reason": "test"}
+    )
+    with caplog.at_level("ERROR"):
+        runtime._fail(case_id, RuntimeError("late crash"))
+    assert "could not escalate" not in caplog.text
+    assert store.get_case(case_id).status == CaseStatus.ESCALATED  # type: ignore[union-attr]
+    assert len([e for e in store.audit if e.tool == "workflow_failed"]) == 1
+
+
 class _Snapshot:
     def __init__(self, values: dict[str, object], next_: tuple[str, ...]) -> None:
         self.values, self.next, self.tasks = values, next_, []

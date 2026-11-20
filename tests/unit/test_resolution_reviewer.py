@@ -169,3 +169,10 @@ def test_reviewer_gives_up_on_unusable_output(store: InMemoryStore, case_facts: 
 
 def test_reviewer_has_no_tools() -> None:
     assert allowlists.ALLOWLISTS[allowlists.REVIEWER] == frozenset()
+
+
+def test_default_output_budget_is_not_the_old_1024() -> None:
+    """M7: reasoning tokens count against max_tokens, so 1024 and 2048 both truncated replies."""
+    from disputedesk.agents.common import DEFAULT_MAX_TOKENS
+
+    assert DEFAULT_MAX_TOKENS >= 8192

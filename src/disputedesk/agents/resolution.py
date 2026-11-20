@@ -15,7 +15,12 @@ import time
 from pydantic import BaseModel, Field
 
 from disputedesk.agents import allowlists
-from disputedesk.agents.common import DecisionAuditor, complete_json, untrusted
+from disputedesk.agents.common import (
+    DEFAULT_MAX_TOKENS,
+    DecisionAuditor,
+    complete_json,
+    untrusted,
+)
 from disputedesk.agents.policy import PolicyAnswer
 from disputedesk.agents.toolbox import ToolBox
 from disputedesk.db.models import AuditOutcome, CaseDraft, Decision
@@ -77,7 +82,7 @@ class ResolutionAgent:
                 system=SYSTEM_PROMPT,
                 user=build_user_message(facts, route, evidence, policy, previous, feedback),
                 schema=_Decision,
-                max_tokens=2048,
+                max_tokens=DEFAULT_MAX_TOKENS,
             )
             saved = CaseDraft.model_validate(
                 self._tools.call(

@@ -116,6 +116,13 @@ def judge_settings(s: Settings) -> Settings:
 # --------------------------------------------------------------------------- phase 1: the graph
 
 
+def evidence_facts(state: DisputeState) -> dict[str, object] | None:
+    """What the tools returned (not the Evidence agent's own summary), for the letter judge."""
+    if state.evidence is None:
+        return None
+    return state.evidence.model_dump(mode="json", exclude={"summary", "leaning"}, exclude_none=True)
+
+
 def run_case(runtime: Runtime, world: World, case: GoldenCase) -> m.CaseOutcome:
     case_id = world.case_ids[case.id]
     try:
@@ -143,6 +150,7 @@ def run_case(runtime: Runtime, world: World, case: GoldenCase) -> m.CaseOutcome:
         policy_summary=state.policy.summary if state.policy else None,
         rationale=state.draft.rationale if state.draft else None,
         letter=state.draft.letter if state.draft else None,
+        evidence=evidence_facts(state),
         error=None if view.workflow != "failed" else "workflow failed (case was escalated)",
     )
 
