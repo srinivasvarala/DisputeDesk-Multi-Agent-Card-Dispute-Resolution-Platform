@@ -25,10 +25,10 @@ def _chunk(source: str, section: str) -> RetrievedChunk:
     )
 
 
-def test_dataset_has_ten_unique_questions() -> None:
+def test_dataset_has_25_unique_questions() -> None:
     cases = load_cases(ROOT / "evals" / "datasets" / "retrieval.jsonl")
-    assert len(cases) == 10
-    assert len({c.question for c in cases}) == 10
+    assert len(cases) == 25
+    assert len({c.question for c in cases}) == 25
 
 
 def test_every_expected_target_exists_in_the_corpus() -> None:
