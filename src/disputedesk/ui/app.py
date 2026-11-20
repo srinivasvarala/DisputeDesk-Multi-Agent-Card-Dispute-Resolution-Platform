@@ -40,6 +40,7 @@ def render_case(client: ReviewerClient, view: DisputeView) -> None:
     if view.workflow is WorkflowState.NOT_STARTED:
         if view.case_status is CaseStatus.OPEN and st.button("Start dispute"):
             client.start(view.case_id)
+            st.session_state["keep"] = view.case_id
             st.rerun()
         return
 
@@ -70,9 +71,11 @@ def render_case(client: ReviewerClient, view: DisputeView) -> None:
         approve, reject = st.columns(2)
         if approve.button("Approve", type="primary"):
             client.decide(view.case_id, approved=True, note=note)
+            st.session_state["keep"] = view.case_id
             st.rerun()
         if reject.button("Reject"):
             client.decide(view.case_id, approved=False, note=note)
+            st.session_state["keep"] = view.case_id
             st.rerun()
     elif view.workflow is WorkflowState.FAILED:
         st.error("The workflow failed and the case was escalated to a human.")
@@ -96,14 +99,20 @@ def main() -> None:
             st.rerun()
         cases = client.list_cases(choice)
         st.caption(f"{len(cases)} case(s)")
+        labels = {
+            c.case_id: f"{c.case_id} · {c.reason_code.value} · {money(c.amount_cents)}"
+            for c in cases
+        }
+        ids = list(labels)
+        # A case we just acted on changes status and falls out of this filter; keep it
+        # selected so the reviewer sees the outcome instead of jumping to another case.
+        keep = st.session_state.get("keep")
+        if keep and keep not in ids:
+            ids.insert(0, keep)
         selected = st.radio(
             "Cases",
-            [c.case_id for c in cases],
-            format_func=lambda cid: next(
-                f"{c.case_id} · {c.reason_code.value} · {money(c.amount_cents)}"
-                for c in cases
-                if c.case_id == cid
-            ),
+            ids,
+            format_func=lambda cid: labels.get(cid, f"{cid} · (status changed)"),
             label_visibility="collapsed",
         )
 
