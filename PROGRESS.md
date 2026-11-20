@@ -9,7 +9,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M2: RAG over dispute policies | ✅ Done | 2026-11-19 | `27fd98f`, `8a32400`, `0631988`, `1748131`, `ae83fc6`, `7e8f6a3`, `9c5d32c`, `7537998` |
 | M3: Multi-agent graph | ✅ Done | 2026-11-19 | `db8dfe8`, `3666e3e`, `0df42de`, `183817d`, `d095789`, `278f927`, `a7a348a`, `57183d1`, `6827e19`, `4c5c935`, `887b0f2` |
 | M4: Guardrails | ✅ Done | 2026-11-19 | (see git log, `feat(guardrails)`) |
-| M5: Security | ⏳ Not started | | |
+| M5: Security | ✅ Done (CI run pending) | 2026-11-19 | see git log, `feat(security)` / `ci(security)` / `docs(security)` |
 | M6: Observability | ⏳ Not started | | |
 | M7: Evals | ⏳ Not started | | |
 | M8: UI, docs and polish | ⏳ Not started | | |
@@ -278,3 +278,42 @@ Retrieval results on the 25-question set (k=5):
 - Policy-agent and graph test fixtures use the new wording, and a test now reads the real policy file so the fixture cannot drift from it.
 - The retrieval eval (`evals/run_evals.py`) does not exist yet (M7), so retrieval quality after the rewording is covered by the integration tests only.
 
+---
+
+## M5: Security ✅
+
+**Goal:** a defensible threat model, not just a feature list.
+
+### Delivered
+- **JWT auth** (`security/jwt.py`, `scopes.py`): HS256, pinned algorithm, required `exp/iss/aud/sub`, roles `analyst`, `approver`, `admin` mapped to scopes in plain Python. App refuses to start without a 32+ char `JWT_SECRET`. New dep: `pyjwt`.
+- **Route scopes** (`api/auth.py`): 401 without a valid token, 403 without the scope, on every route. The approver is the token `sub`; a body that names one is a 422. New admin-only `GET /audit`.
+- **Per-agent tool scopes** (`security/agent_tokens.py`): the `ToolBox` mints a 60 s signed credential per call (agent + allowed tools, separate audience from user tokens). The MCP servers verify it, deny other tools, and audit the *verified* agent as actor. Denials are audited as `denied`.
+- **Untrusted text**: `untrusted()` labels blocks `trust="untrusted"` and escapes them; system prompts reference the label.
+- **Append-only `audit_log`**: DB triggers reject UPDATE/DELETE/TRUNCATE. 401/403 denials, case starts and approvals are audited under the token subject.
+- `docs/THREAT_MODEL.md` (STRIDE-lite, one page, with residual risks).
+- `security.yml` (gitleaks, pip-audit, Trivy, CodeQL) and a minimal non-root `Dockerfile`.
+
+### Acceptance
+| Criterion | Result |
+|---|---|
+| Unauthenticated and wrong-role requests rejected | ✅ `test_api_auth.py`, `test_jwt.py` |
+| Injection in merchant evidence does not change the decision | ✅ `test_prompt_injection.py` (gullible stand-in model; removing the label or escaping fails 7 of 8 tests) |
+| Per-agent scopes enforced at the MCP layer | ✅ `test_agent_credentials.py` |
+| audit_log append-only | ✅ `test_postgres_store.py` (triggers) |
+| Security workflow is green | ⏳ Not verified: needs a run on GitHub. Locally: `pip-audit` clean, image builds and starts. gitleaks, Trivy and CodeQL were not run locally (not installed). |
+
+Tests: 317 unit, 57 integration passing; ruff and mypy clean.
+
+### Decisions
+- HS256 with a shared secret (Cognito replaces it in M9). Signed per-agent service tokens for in-process MCP calls.
+- No free-text merchant field exists in the data model, so the injection test plants the payload in merchant name, carrier, tracking number and the customer narrative.
+- Deviation from the blueprint's `security.yml`: `uvx pip-audit` would audit its own environment, so the job audits the exported lockfile instead.
+- Role is stored in the audit row's `arguments` rather than a new column (no schema migration).
+
+### Known gaps
+- `check_input`/`check_output` and the Presidio log filter are still not wired into the graph (carried from M4).
+- No login endpoint, token revocation or rate limiting; no separation of duties between starter and approver.
+- Standalone MCP servers (`python -m disputedesk.mcp_servers.*`) do not verify credentials.
+- Audit tamper resistance is shallow: the DB owner can disable the triggers; `GET` reads are not audited.
+- Injection resistance against a real model is untested until M7 (promptfoo red-team).
+- `.env` now needs `JWT_SECRET` (`openssl rand -hex 32`). `scripts/run_disputes.py` mints an approver token from it.
