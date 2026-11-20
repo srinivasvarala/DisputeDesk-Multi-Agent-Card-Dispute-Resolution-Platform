@@ -1,0 +1,14 @@
+# NeMo Guardrails config for the EDGES only: input and output rails.
+# LangGraph owns orchestration; there are no dialog flows here and no `models:` entry, because
+# every rail is a Python action (see ../nemo_edge.py). Any LLM judging goes through llm.py.
+colang_version: "1.0"
+models: []
+rails:
+  input:
+    flows:
+      - check jailbreak
+      - check off topic
+  output:
+    flows:
+      - check output pii
+      - check grounding

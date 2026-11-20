@@ -1,0 +1,26 @@
+define bot refuse
+  "blocked by guardrail"
+
+define flow check jailbreak
+  $hit = execute detect_jailbreak(text=$user_message)
+  if $hit
+    bot refuse
+    stop
+
+define flow check off topic
+  $hit = execute detect_off_topic(text=$user_message)
+  if $hit
+    bot refuse
+    stop
+
+define flow check output pii
+  $hit = execute detect_pii(text=$bot_message)
+  if $hit
+    bot refuse
+    stop
+
+define flow check grounding
+  $hit = execute detect_ungrounded(text=$bot_message)
+  if $hit
+    bot refuse
+    stop

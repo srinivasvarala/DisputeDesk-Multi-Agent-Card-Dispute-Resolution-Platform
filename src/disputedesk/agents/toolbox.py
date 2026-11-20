@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from typing import Any
 
 import anyio
@@ -21,14 +20,16 @@ from mcp.server.mcpserver import MCPServer
 from mcp_types import Implementation
 
 from disputedesk.agents.resilience import CallFailedError, NonRetryableError, call_with_retry
-from disputedesk.db.models import AuditEntry, AuditOutcome
+from disputedesk.guardrails.interface import Action, check_tool_call
 from disputedesk.mcp_servers.common.store import AuditSink
-
-TOOLBOX_AUDIT_SERVER = "toolbox"
 
 
 class ToolDeniedError(PermissionError):
     """The agent tried a tool that is not on its allowlist."""
+
+
+class ApprovalRequiredError(PermissionError):
+    """The call is allowed in principle but a human approver must decide first (refund cap)."""
 
 
 class ToolCallError(NonRetryableError, RuntimeError):
@@ -56,9 +57,19 @@ class ToolBox:
 
     def call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Run an allowed tool and return its structured result."""
-        if tool not in self.allowed:
-            self._audit_denied(tool, arguments)
+        case_id = arguments.get("case_id")
+        verdict = check_tool_call(
+            self.agent,
+            tool,
+            arguments,
+            case_id=case_id if isinstance(case_id, str) else None,
+            allowed=self.allowed,
+            audit=self._audit,
+        )
+        if verdict.action == Action.DENY:
             raise ToolDeniedError(f"{self.agent} may not call {tool}")
+        if verdict.action == Action.REQUIRE_APPROVAL:
+            raise ApprovalRequiredError("; ".join(verdict.reasons))
         server = self._tools.get(tool)
         if server is None:
             raise ToolCallError(f"no server provides tool {tool}")
@@ -83,22 +94,6 @@ class ToolBox:
             text = " ".join(getattr(c, "text", "") for c in result.content)
             raise ToolCallError(f"{tool} failed: {text}")
         return result.structured_content or {}
-
-    def _audit_denied(self, tool: str, arguments: dict[str, Any]) -> None:
-        case_id = arguments.get("case_id")
-        self._audit.write_audit(
-            AuditEntry(
-                server=TOOLBOX_AUDIT_SERVER,
-                tool=tool,
-                actor=self.agent,
-                case_id=case_id if isinstance(case_id, str) else None,
-                arguments=arguments,
-                outcome=AuditOutcome.INVALID_INPUT,
-                error="tool not in agent allowlist",
-                duration_ms=0,
-                created_at=datetime.now(UTC),
-            )
-        )
 
 
 def tool_index(servers: Iterable[MCPServer]) -> dict[str, MCPServer]:

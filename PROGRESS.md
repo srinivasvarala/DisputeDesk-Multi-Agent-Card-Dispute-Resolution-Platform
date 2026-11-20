@@ -8,7 +8,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M1: Data and MCP servers | ✅ Done | 2026-11-19 | `5e295cf`, `27ecb5b`, `3b7fdb4`, `7850a87`, `d4d52e9` |
 | M2: RAG over dispute policies | ✅ Done | 2026-11-19 | `27fd98f`, `8a32400`, `0631988`, `1748131`, `ae83fc6`, `7e8f6a3`, `9c5d32c`, `7537998` |
 | M3: Multi-agent graph | ✅ Done | 2026-11-19 | `db8dfe8`, `3666e3e`, `0df42de`, `183817d`, `d095789`, `278f927`, `a7a348a`, `57183d1`, `6827e19`, `4c5c935`, `887b0f2` |
-| M4: Guardrails | ⏳ Not started | | |
+| M4: Guardrails | ✅ Done | 2026-11-19 | (see git log, `feat(guardrails)`) |
 | M5: Security | ⏳ Not started | | |
 | M6: Observability | ⏳ Not started | | |
 | M7: Evals | ⏳ Not started | | |
@@ -214,3 +214,49 @@ Retrieval results on the 25-question set (k=5):
 - **Agent quality with a real model is untested** (fake LLM only); that is M7. Prompts have not been tuned.
 - Evidence facts for `get_history`/`get_dispute_rate` carry no `case_id`, so those audit rows are not filterable by case (they are by actor and time).
 - `OllamaClient` still does not close its HTTP client (carried from M0).
+
+---
+
+## M4: Guardrails ✅
+
+**Goal:** unsafe input/output is blocked, deterministic rules are enforced in code.
+
+### Delivered
+- `guardrails/interface.py`: `check_input`, `check_output`, `check_tool_call` returning a `Verdict` (`allow | redact | block | deny | require_approval`). Fails closed if a NeMo check errors.
+- `guardrails/policy_rules.py` (plain Python, no NeMo/LLM): per-agent allowlist (reads `agents/allowlists.py`) and the refund cap (`human_approval_threshold_cents`). Deny wins over the cap.
+- `guardrails/nemo_edge.py` + `nemo_config/` (Colang 1.0): input rails (jailbreak/injection, off-topic) and output rails (PII, grounding). Edges only; LangGraph still owns the flow. Rails are Python actions, so no provider SDK is touched.
+- `guardrails/judges.py`: regex heuristics plus an optional `LLMJudge` that goes through `llm.py` and fails closed. Grounding = every `$` amount and card last-4 in the output must appear in the supplied case material.
+- `guardrails/redaction.py`: Presidio (card, SSN, email, phone, IBAN) and a logging filter. PERSON is excluded on purpose (too many false positives on merchant names).
+- `guardrails/telemetry.py`: `guardrail.rail/action/agent/triggered` + `case_id` as a span event, and `guardrail.triggered` on the span. OTel API only, so it is a no-op until M6 adds the SDK.
+- `ToolBox.call` now delegates to `check_tool_call` (raises `ToolDeniedError` or the new `ApprovalRequiredError`).
+- Denied/redacted/blocked decisions go to `audit_log` (rail and entity types only, never the text). Allowed tool calls are not re-audited because the MCP servers already do it.
+
+### Acceptance
+| Criterion | Result |
+|---|---|
+| PII input is redacted | ✅ `test_pii_in_input_is_redacted` |
+| Jailbreak prompt is blocked | ✅ `test_jailbreak_is_blocked` |
+| Tool outside allowlist is denied | ✅ `test_forbidden_tool_is_denied`, `test_toolbox_enforces_refund_cap_before_calling_the_server` |
+| Refund over cap forces human approval | ✅ `test_refund_over_cap_requires_human_approval` |
+| Events emitted as trace attributes | ✅ `test_guardrail_events_are_emitted_as_trace_attributes` |
+
+### Decisions
+- Rails are Python actions behind Colang flows, with no NeMo-managed LLM, to keep the "all LLM calls via `llm.py`" rule.
+- `Guardrails(config, use_iorails=False)` instead of `LLMRails`, see issues below.
+- Only the tool-call check is wired into the system (per instruction). `check_input`/`check_output` are not yet called by the graph.
+- `en_core_web_sm` (not `lg`) to keep CI fast.
+
+### NeMo / dependency issues flagged
+1. **`LLMRails` is deprecated in 0.25.0** (removal no earlier than 0.27). The replacement `Guardrails` falls back to it for custom Colang flows, because the new IORails engine only supports catalogued rails. We pass `use_iorails=False`. Revisit on upgrade.
+2. **Presidio pins `numpy<2.5`**, which downgraded numpy 2.5.5 to 2.4.6. The full unit and integration suites pass.
+3. NeMo emits two `DeprecationWarning`s of its own (`nim_url`, `get_event_loop`) in tests. Not ours to fix.
+4. `nemoguardrails` has no `py.typed`, so mypy ignores its imports (override in `pyproject.toml`).
+5. `en_core_web_sm` is installed from a GitHub release URL (not on PyPI). CI needs network access to GitHub for `uv sync`.
+6. New deps: `nemoguardrails`, `presidio-analyzer`, `presidio-anonymizer`, `spacy`, `en_core_web_sm`, `opentelemetry-api`; dev: `opentelemetry-sdk` (to assert span attributes).
+
+### Known gaps
+- **Cap boundary mismatch:** `policy/11` says approval is needed *above* $500.00 (so exactly $500 is automatic). `graph.rules.risk_tier` (M3) and the new rule both use *at or above*. I kept the stricter, consistent behaviour. Needs a decision.
+- No refund tool exists yet; the cap triggers on a `refund_cents`/`amount_cents` argument. Nothing sets it today, so it is exercised by tests only until a payout step exists.
+- `check_input`/`check_output` are not wired into intake/finalize. Required-evidence check and guardrail metrics (blueprint M4) not built. Metrics land with M6.
+- Heuristic jailbreak patterns are a baseline. Red-teaming is M7; untrusted-content wrapping is M5.
+
