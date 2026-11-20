@@ -30,3 +30,6 @@ working together, built in a day or two and runnable locally with one `docker co
 - The OTel collector image is distroless, so its compose healthcheck validates config with the collector
   binary; the live health endpoint is `http://localhost:13133/`.
 - Bedrock is a stub until M9. No `boto3` dependency until then.
+
+**M6 outcome:** implemented as described. Spans go to the collector (then Jaeger); LLM generations go through the
+Langfuse v2 SDK with the OTel trace id as the Langfuse trace id, so one id finds the case in both UIs.

@@ -10,7 +10,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M3: Multi-agent graph | ✅ Done | 2026-11-19 | `db8dfe8`, `3666e3e`, `0df42de`, `183817d`, `d095789`, `278f927`, `a7a348a`, `57183d1`, `6827e19`, `4c5c935`, `887b0f2` |
 | M4: Guardrails | ✅ Done | 2026-11-19 | (see git log, `feat(guardrails)`) |
 | M5: Security | ✅ Done | 2026-11-19 | see git log, `feat(security)` / `ci(security)` / `docs(security)` |
-| M6: Observability | ⏳ Not started | | |
+| M6: Observability | ✅ Done | 2026-11-20 | `a53add5`, `a93c0ad`, see git log `feat(observability)` / `docs(observability)` |
 | M7: Evals | ⏳ Not started | | |
 | M8: UI, docs and polish | ⏳ Not started | | |
 | M9: AWS deployment (phase 2) | ⏳ Not started | | |
@@ -327,3 +327,47 @@ Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 - **Reads:** `GET /audit` is audited (fail-closed, written before the data is returned). `GET /disputes/{id}` is deliberately not audited; the exception is documented in CLAUDE.md.
 - **Test rows:** integration tests now run in a throwaway database (created for the session, dropped at the end), so they no longer add permanent rows to the dev `audit_log`. The audit tests use fixed tags and exact counts. The DB role needs `CREATEDB` (true for `postgres` in compose and CI). The `models` retrieval test now re-ingests into the fresh database each run (about 2 minutes with real models).
 - Nothing from the M5 review is open.
+
+---
+
+## M6: Observability ✅
+
+**Goal:** every case is traceable end to end.
+
+### Delivered
+- `observability/otel.py`: OTel SDK setup (OTLP/HTTP to the collector), span helpers, per-case context, metrics. Off unless `OTEL_ENABLED=true`, so tests and CI never contact a collector.
+- Spans: FastAPI (instrumentation), `case.run` / `case.resume` root, `agent.<node>` per graph node, `tool.<name>` per MCP call (plus the MCP server's own spans), `llm.<agent>` per model call, every Postgres query (psycopg instrumentation).
+- Attributes: `case_id`, `agent`, `risk_tier` on agent/tool/LLM spans; `guardrail.triggered` on the span, plus a `guardrail` event per check (from M4).
+- Metrics (scraped at `http://localhost:8889/metrics`): `agent.latency` (label `agent`), `case.cost_usd`, `guardrail.checks` (label `triggered`; rate = triggered / all), `case.revision_loops`. `case_id` is a span attribute, not a metric label (cardinality).
+- `observability/langfuse.py`: `TracedLLM` wraps the LLM client: prompt, reply, model, tokens and cost go to Langfuse as generations, redacted first. The Langfuse trace id is the OTel trace id.
+- Infra: Jaeger all-in-one (UI `:16686`), collector exports traces to Jaeger and metrics to Prometheus format.
+- `LLM_PRICE_INPUT_PER_MTOK` / `LLM_PRICE_OUTPUT_PER_MTOK` settings for cost (0 = unpriced).
+
+### How to look at a case
+- Jaeger: http://localhost:16686, Service `disputedesk`, tag `case_id=case_0004`, Find Traces.
+- Langfuse: http://localhost:3000, project DisputeDesk, Tracing, open `dispute case_0004` (same trace id). Cost over time: Dashboard.
+
+### Acceptance
+| Criterion | Result |
+|---|---|
+| One case shows one connected trace across API, agents and MCP calls | ✅ Real case `case_0004` (real `claude-sonnet-5-5`): one Jaeger trace `539ce7c8b04989555ee812b532d89b0b`, 134 spans, one root `POST /disputes`. Unit test asserts one trace id and parent links. |
+| Cost per case is visible | ✅ Langfuse shows $0.028028 for `case_0004` (8,590 tokens); `case.cost_usd` on the root span and as a metric. |
+| Screenshot committed to `docs/` | ✅ [Langfuse trace](docs/img/langfuse-trace.jpg), [Langfuse dashboard](docs/img/langfuse-dashboard.jpg), [Jaeger trace](docs/img/jaeger-trace.jpg) |
+
+Tests: 330 unit, 58 integration passing; ruff and mypy clean.
+
+### Decisions
+- Two UIs, one trace id (ADR-001 kept): Jaeger for the full span tree, Langfuse for prompts, tokens and cost. Langfuse v2 has no OTLP ingest, so generations go through the v2 SDK (`langfuse<3`) with the OTel trace id as the Langfuse trace id.
+- A case paused for approval and resumed joins its first trace (the resume span is parented to the first run's root), so it is still one trace.
+- `risk_tier` on node spans comes from the checkpointed state, so it survives a pause and resume.
+- `call_with_retry` copies the caller's context into its worker thread; without that every tool and LLM span would be orphaned.
+- New dependencies: `langfuse<3` (v2 server), `opentelemetry-sdk` (moved from dev), `opentelemetry-exporter-otlp-proto-http`, `-instrumentation-fastapi`, `-instrumentation-psycopg`.
+- Prices come from the Claude API price list (`claude-sonnet-5-5`: $2 / $10 per million tokens); cache-read tokens are not priced separately (no caching is used).
+
+### Known gaps
+- The trace of a resumed case is only joined while the API process lives: the first trace id is kept in memory, so after a restart a resume starts a new trace.
+- `case.cost_usd` is recorded per run segment, so a case that pauses and resumes is counted as two points.
+- Langfuse trace-level Input/Output show `null` (only generations carry content).
+- Jaeger stores traces in memory; they are lost when the container restarts. No Prometheus/Grafana is run; metrics are only exposed at `:8889`.
+- No alerting, and no saved custom Langfuse dashboard beyond the built-in one.
+- Guardrail `check_input`/`check_output` still not wired into intake/finalize (carried from M4), so the trigger rate only counts the checks that exist today (tool-call rules).
