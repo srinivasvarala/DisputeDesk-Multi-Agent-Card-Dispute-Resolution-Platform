@@ -162,3 +162,16 @@ def test_faithfulness_judge_retries_malformed_json() -> None:
     replies = iter(['{"ok": tru', '{"ok": true}'])
     judge = JudgeModel(FakeClient(lambda system, messages: next(replies)), "fake")
     assert judge.generate("p", Verdict) == Verdict(ok=True)
+
+
+def test_an_empty_judge_setting_means_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GitHub renders an undefined repo variable as an empty string."""
+    from disputedesk.config import Settings
+    from disputedesk.evals.runner import judge_settings, model_name
+
+    monkeypatch.setenv("EVAL_JUDGE_MODEL", "")
+    monkeypatch.setenv("EVAL_JUDGE_PROVIDER", "")
+    s = Settings(_env_file=None, llm_provider="anthropic", anthropic_model="claude-haiku-5-5")
+    assert s.eval_judge_model is None
+    assert s.eval_judge_provider is None
+    assert model_name(judge_settings(s)) == "claude-haiku-5-5"  # same model as the system

@@ -102,9 +102,9 @@ class ResolutionAgent:
                 user=build_user_message(facts, route, evidence, policy, previous, feedback),
                 schema=_Decision,
                 max_tokens=DEFAULT_MAX_TOKENS,
-                check=lambda r: check_letter_cites(r, policy),
             )
             result = apply_escalation_rules(result, evidence)
+            result = ensure_letter_cites(result, policy)
             saved = CaseDraft.model_validate(
                 self._tools.call(
                     "save_draft",
@@ -146,20 +146,32 @@ class ResolutionAgent:
         )
 
 
-def check_letter_cites(result: _Decision, policy: PolicyAnswer) -> None:
-    """An accept or reject letter must name a rulebook document it relied on (rulebook 14)."""
+ESCALATION_NOTICE = (
+    "This dispute has been referred to a human approver, who will make the final decision. "
+    "No decision has been made yet."
+)
+
+
+def ensure_letter_cites(result: _Decision, policy: PolicyAnswer) -> _Decision:
+    """An accept or reject letter names the rulebook section it relies on (rulebook 14).
+
+    The prompt asks the model to do it. If it did not (it wrote "Rulebook 04", say), a reference
+    line is added in code: a formatting miss must not cost a correct decision."""
     if result.decision == Decision.ESCALATE:
-        return  # not sent to anyone
+        return result  # not sent to anyone
     letter = result.letter.lower()
-    if not any(c.source.lower() in letter for c in policy.citations):
-        names = ", ".join(sorted({c.source for c in policy.citations}))
-        raise ValueError(
-            f"the letter must name the rulebook document it relies on, one of: {names}"
-        )
+    if any(c.source.lower() in letter for c in policy.citations):
+        return result
+    first = policy.citations[0]
+    reference = f"\n\nRulebook reference: {first.source}, {first.section}."
+    return result.model_copy(update={"letter": (result.letter + reference)[:8_000]})
 
 
 def apply_escalation_rules(result: _Decision, evidence: Evidence) -> _Decision:
-    """Plain-Python escalation triggers (rulebook 11): they win over the model's decision."""
+    """Plain-Python escalation triggers (rulebook 11): they win over the model's decision.
+
+    The model's letter announced a decision that is no longer the outcome, so it is replaced
+    with a neutral notice; the analyst's reasoning stays in the rationale."""
     if result.decision == Decision.ESCALATE:
         return result
     reason = rules.escalation_override(
@@ -173,6 +185,7 @@ def apply_escalation_rules(result: _Decision, evidence: Evidence) -> _Decision:
             "rationale": f"Escalated by rule: {reason}. Analyst's draft: {result.rationale}"[
                 :4_000
             ],
+            "letter": ESCALATION_NOTICE,
         }
     )
 

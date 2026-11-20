@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LLMProvider = Literal["anthropic", "bedrock", "ollama", "fake"]
@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # system under test. A judge from a different model family avoids self-preference bias.
     eval_judge_provider: LLMProvider | None = None
     eval_judge_model: str | None = None
+
+    @field_validator("eval_judge_provider", "eval_judge_model", mode="before")
+    @classmethod
+    def _empty_means_unset(cls, value: object) -> object:
+        """CI exports these from optional repo variables, and an undefined GitHub variable
+        arrives as an empty string. Treat that as "not set", not as a model named ''."""
+        return None if value == "" else value
 
     # --- Agents ---
     tool_timeout_seconds: float = 15.0

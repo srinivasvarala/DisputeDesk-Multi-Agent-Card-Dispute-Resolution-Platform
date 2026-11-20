@@ -430,7 +430,7 @@ Tests were added for each, plus for the harness changes (360 unit tests pass).
 
 ### M7.2: what changed
 1. **Analyst confidence and rule-based escalation.** The Resolution agent now reports a `confidence` (0-1). Plain Python (`graph/rules.py: escalation_override`) escalates when it is below 0.70 or the cardholder has 3 or more disputes in 90 days, counting the case itself (rulebook 11, triggers 2 and 5). The history call now uses a 90-day window to match. The prompt no longer tells the model to escalate over the amount, the merchant's risk tier, the dispute history, or details the tools cannot show.
-2. **Letters cite the rulebook.** An accept or reject letter must name a cited rulebook document; otherwise the draft is sent back once and then fails (rulebook 14). The letter judge's citation score went from 1.27 to 3.75.
+2. **Letters cite the rulebook.** An accept or reject letter should name a cited rulebook document (rulebook 14). The prompt asks for it; if the model still omits it, a "Rulebook reference: <document>, <section>." line is appended in code (added after the code review; the first version failed the draft instead). When a rule forces an escalation, the model's letter is replaced with a neutral "referred to a human approver" notice. The letter judge's citation score went from 1.27 to 3.75.
 3. **Rulebook 11 clarified** to match the graph: $500+ and high-risk cases get a drafted recommendation that a human approves; the analyst only hands over as "escalate" when it cannot decide. The five labels that had accepted `escalate` (g06, g08, g17, g18, g24) went back to strict, and the info-only `decision_accuracy_lenient` metric was removed.
 Tests: 366 unit and 57 integration (the real-model test is deselected) pass; ruff and mypy are clean.
 
@@ -462,6 +462,9 @@ Tests: 373 unit and 57 integration pass; ruff and mypy are clean.
 - The CI eval job has not run on GitHub yet (needs the `ANTHROPIC_API_KEY` secret) and will fail while the gate is red.
 - Promptfoo was not re-run after M7.3 (16 of 18 after M7.2).
 - The baseline and later columns are not exactly comparable (harness changes disclosed above, the two added cases and the re-dated fixtures).
+
+### Code review (after M7.3)
+Six findings; three fixed in `fix(agents)`: (1) an empty `EVAL_JUDGE_MODEL` / `EVAL_JUDGE_PROVIDER` (what GitHub passes for an undefined repo variable) is now read as unset instead of a model named "" (it would have failed every CI eval run); (2) a letter that does not name a rulebook document gets a reference line appended instead of failing the case; (3) a rule-forced escalation no longer keeps a letter announcing an accept or reject. Left open: the 90-day history window also narrows the spend and refund history shown to the analyst (a side effect of the repeat-dispute rule); the eval progress counter is not thread-safe (cosmetic); `DEFAULT_MAX_TOKENS` is 8192 while `llm_timeout_seconds` is still 60, so a long reasoning reply could time out (no timeouts in 5 runs; revisit in M8).
 
 ### Deferred (later, not blocking M8)
 (a) Wire `check_input` into intake and widen the rails beyond regexes (guardrail catch rate stays 0.333 until then). (b) Not-as-described facts as data: merchant contact date and return tracking, which g25, g27 and g28 need. (c) Replace the forbidden-string leak check with a judge that distinguishes complying from refusing. (d) Separate judge model and repeat runs to measure variance. (e) Investigate g22 (accepted a duplicate whose twin charge was already refunded). (f) Re-run Promptfoo. (g) Give the CI job its `ANTHROPIC_API_KEY` secret, and decide whether a red gate should block merges.

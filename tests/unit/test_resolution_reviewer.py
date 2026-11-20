@@ -238,19 +238,33 @@ def test_a_model_escalation_is_left_alone(
     assert draft.rationale == "Conflict."
 
 
-def test_a_letter_that_names_no_cited_document_is_sent_back_once(
+def test_a_letter_that_names_no_cited_document_gets_a_reference_line(
     store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
 ) -> None:
-    draft = decide(store, box, case_facts, reply(letter="Dear merchant, accepted."), DRAFT_REPLY)
-    assert draft.letter == LETTER
+    """Formatting misses ("Rulebook 04") must not cost a correct decision: no retry, no crash."""
+    draft = decide(store, box, case_facts, reply(letter="Dear merchant, accepted."))
+    assert draft.decision == Decision.ACCEPT
+    assert draft.letter.startswith("Dear merchant, accepted.")
+    assert draft.letter.endswith("Rulebook reference: a.md, S.")
 
 
-def test_a_letter_that_never_names_one_fails_the_draft(
+def test_a_letter_that_already_names_one_is_left_alone(
     store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
 ) -> None:
-    bad = reply(letter="Dear merchant, accepted.")
-    with pytest.raises(AgentOutputError, match="must name the rulebook document"):
-        decide(store, box, case_facts, bad, bad)
+    assert decide(store, box, case_facts, DRAFT_REPLY).letter == LETTER
+
+
+def test_a_rule_escalation_replaces_the_letter_that_announced_a_decision(
+    store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
+) -> None:
+    from disputedesk.agents.resolution import ESCALATION_NOTICE
+
+    draft = decide(store, box, case_facts, reply(confidence=0.4))
+    assert draft.decision == Decision.ESCALATE
+    assert draft.letter == ESCALATION_NOTICE
+    assert "accept" not in draft.letter.lower()
+    assert "No decision has been made yet" in draft.letter
+    assert "No delivery." in draft.rationale  # the analyst's reasoning is kept for the approver
 
 
 def test_filing_items_reach_the_prompt_as_structured_attributes(case_facts: CaseFacts) -> None:
