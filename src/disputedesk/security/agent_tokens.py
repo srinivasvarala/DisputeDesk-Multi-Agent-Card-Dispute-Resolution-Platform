@@ -31,6 +31,14 @@ class AgentIdentity(BaseModel):
     tools: frozenset[str]
 
 
+class NoAuth:
+    """Explicit opt-out of credential checks, for the standalone demo servers and unit tests of
+    a single server. Servers must be given a verifier or this; there is no silent default."""
+
+
+NO_AUTH = NoAuth()
+
+
 class CredentialIssuer:
     def __init__(self, settings: Settings) -> None:
         self._secret = signing_secret(settings)

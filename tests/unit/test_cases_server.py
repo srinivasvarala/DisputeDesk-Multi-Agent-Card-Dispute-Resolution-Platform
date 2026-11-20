@@ -11,6 +11,7 @@ from disputedesk.mcp_servers.cases.server import READ_TOOLS, WRITE_TOOLS, build_
 from disputedesk.mcp_servers.cases.workflow import ALLOWED_TRANSITIONS, transition_error
 from disputedesk.mcp_servers.common.audit import AuditedMCPServer
 from disputedesk.mcp_servers.common.store import InMemoryStore
+from disputedesk.security.agent_tokens import NO_AUTH
 from tests.unit.mcp_helpers import TEST_ACTOR, call, error_text, last_audit, ok
 
 pytestmark = pytest.mark.anyio
@@ -264,7 +265,7 @@ async def test_write_rolled_back_and_refused_when_audit_fails() -> None:
             raise OSError("relation audit_log: permission denied")
 
     store = FailingAudit(generate())
-    server = build_server(store, store, store, clock=lambda: REFERENCE_TIME)
+    server = build_server(store, store, store, clock=lambda: REFERENCE_TIME, verifier=NO_AUTH)
     case_id = open_case(store)
     text = error_text(await call(server, "save_draft", {"case_id": case_id, **DRAFT}))
     assert "permission denied" not in text

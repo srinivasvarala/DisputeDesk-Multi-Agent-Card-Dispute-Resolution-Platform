@@ -23,7 +23,7 @@ from disputedesk.mcp_servers.common.params import (
     utc_now,
 )
 from disputedesk.mcp_servers.common.store import AuditSink, ReadStore
-from disputedesk.security.agent_tokens import CredentialVerifier
+from disputedesk.security.agent_tokens import CredentialVerifier, NoAuth
 
 SERVER_NAME = "transactions"
 DEFAULT_PORT = 8101
@@ -63,8 +63,8 @@ class CustomerHistory(BaseModel):
 def build_server(
     store: ReadStore,
     audit: AuditSink,
+    verifier: CredentialVerifier | NoAuth,
     clock: Clock = utc_now,
-    verifier: CredentialVerifier | None = None,
 ) -> AuditedMCPServer:
     server = AuditedMCPServer(
         SERVER_NAME,

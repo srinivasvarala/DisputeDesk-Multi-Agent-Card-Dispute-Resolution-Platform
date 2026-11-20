@@ -9,9 +9,10 @@ Rules:
   change is never committed without its audit row.
 - Fail-closed: if the row cannot be written, the call returns an error. The client gets a
   generic message; database details are only logged server-side.
-- With a `verifier`, every call must carry a valid agent credential that grants the tool. The
-  audit actor is then the verified agent, never the client's self-declared name. A refused call
-  is audited as `denied` and never reaches the tool.
+- A `verifier` is required (`NO_AUTH` is the explicit opt-out). With a `CredentialVerifier`,
+  every call must carry a valid agent credential that grants the tool. The audit actor is then
+  the verified agent, never the client's self-declared name. A refused call is audited as
+  `denied` and never reaches the tool.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from disputedesk.mcp_servers.common.errors import (
 )
 from disputedesk.mcp_servers.common.params import Clock, utc_now
 from disputedesk.mcp_servers.common.store import AuditSink
-from disputedesk.security.agent_tokens import META_KEY, CredentialVerifier
+from disputedesk.security.agent_tokens import META_KEY, CredentialVerifier, NoAuth
 from disputedesk.security.jwt import AuthError
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ class AuditedMCPServer(MCPServer):
         *,
         audit: AuditSink,
         clock: Clock = utc_now,
-        verifier: CredentialVerifier | None = None,
+        verifier: CredentialVerifier | NoAuth,
         **kwargs: Any,
     ):
         super().__init__(name, **kwargs)
@@ -141,8 +142,8 @@ class AuditedMCPServer(MCPServer):
                 await self._write(call.entry(outcome, error), cancelled=cancelled)
 
     def _authorize(self, call: _CallAudit, context: Context[Any, Any] | None) -> None:
-        """Check the agent credential. No-op when the server has no verifier (standalone demo)."""
-        if self._verifier is None:
+        """Check the agent credential. Skipped only for an explicit `NO_AUTH` server."""
+        if isinstance(self._verifier, NoAuth):
             return
         call.actor = f"unauthenticated:{call.actor}"  # until proven otherwise
         try:
@@ -218,7 +219,7 @@ def describe(exc: BaseException) -> str:
 
 
 def _actor(context: Context[Any, Any] | None) -> str:
-    """The client's self-declared name. Only trusted when the server has no verifier."""
+    """The client's self-declared name. Only trusted on a `NO_AUTH` server."""
     if context is None:
         return UNKNOWN_ACTOR
     try:

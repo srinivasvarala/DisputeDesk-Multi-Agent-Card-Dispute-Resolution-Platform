@@ -17,7 +17,7 @@ from disputedesk.mcp_servers.common.audit import AuditedMCPServer
 from disputedesk.mcp_servers.common.errors import NotFoundError
 from disputedesk.mcp_servers.common.params import Clock, MerchantIdParam, TxnIdParam, utc_now
 from disputedesk.mcp_servers.common.store import AuditSink, ReadStore
-from disputedesk.security.agent_tokens import CredentialVerifier
+from disputedesk.security.agent_tokens import CredentialVerifier, NoAuth
 
 SERVER_NAME = "merchant"
 DEFAULT_PORT = 8102
@@ -52,8 +52,8 @@ class DeliveryStatus(BaseModel):
 def build_server(
     store: ReadStore,
     audit: AuditSink,
+    verifier: CredentialVerifier | NoAuth,
     clock: Clock = utc_now,
-    verifier: CredentialVerifier | None = None,
 ) -> AuditedMCPServer:
     server = AuditedMCPServer(
         SERVER_NAME,

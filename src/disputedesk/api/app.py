@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 AUDIT_SERVER = "api"
 
 
+def _actor(principal: Principal) -> str:
+    """Prefixed so a user whose `sub` is an agent's name cannot pass for that agent in the log."""
+    return f"user:{principal.sub}"
+
+
 def _not_found(case_id: str) -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, f"case {case_id} not found")
 
@@ -80,22 +85,27 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     def audit_denied(
         principal: Principal | None, scope: Scope, request: Request, code: int
     ) -> None:
-        """401/403 are audited, but a broken audit log must not turn a denial into a success."""
+        """Authenticated 403s are audited. Anonymous 401s are only logged: audit_log is
+        append-only, so one row per unauthenticated request would let anyone fill it forever.
+        A broken audit log must not turn a denial into a success."""
+        if principal is None:
+            logger.warning("401 %s %s", request.method, request.url.path)
+            return
         route = request.scope.get("route")
         template = getattr(route, "path", request.url.path)
         case_id = request.path_params.get("case_id")
         try:
             audit(
-                principal.sub if principal else "anonymous",
+                _actor(principal),
                 f"{request.method} {template}",
                 case_id=case_id if isinstance(case_id, str) else None,
                 arguments={
                     "scope": scope.value,
                     "status": code,
-                    "role": principal.role.value if principal else None,
+                    "role": principal.role.value,
                 },
                 outcome=AuditOutcome.DENIED,
-                error="authentication required" if principal is None else "insufficient scope",
+                error="insufficient scope",
             )
         except Exception:
             logger.exception("could not audit a denied request")
@@ -133,12 +143,16 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             ) from None
         except WorkflowConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
-        audit(
-            principal.sub,
-            "start_dispute",
-            case_id=body.case_id,
-            arguments={"role": principal.role.value},
-        )
+        try:
+            audit(
+                _actor(principal),
+                "start_dispute",
+                case_id=body.case_id,
+                arguments={"role": principal.role.value},
+            )
+        except Exception:
+            rt().release(body.case_id)  # the run will never start; do not leave the case claimed
+            raise
         background.add_task(rt().run, body.case_id)
         return Accepted(case_id=body.case_id, workflow=WorkflowState.RUNNING)
 
@@ -165,12 +179,16 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             raise _not_found(case_id) from None
         except WorkflowConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
-        audit(
-            principal.sub,
-            "approve_dispute",
-            case_id=case_id,
-            arguments={"role": principal.role.value, "approved": body.approved},
-        )
+        try:
+            audit(
+                _actor(principal),
+                "approve_dispute",
+                case_id=case_id,
+                arguments={"role": principal.role.value, "approved": body.approved},
+            )
+        except Exception:
+            rt().release(case_id)  # the resume will never start; the case stays approvable
+            raise
         background.add_task(rt().resume, case_id, body, principal.sub)
         return Accepted(case_id=case_id, workflow=WorkflowState.RUNNING)
 

@@ -20,7 +20,7 @@ from disputedesk.mcp_servers.common.audit import AuditedMCPServer, audited_write
 from disputedesk.mcp_servers.common.errors import ConflictError, NotFoundError
 from disputedesk.mcp_servers.common.params import AgentNameParam, CaseIdParam, Clock, utc_now
 from disputedesk.mcp_servers.common.store import AuditSink, CaseWriteStore, ReadStore
-from disputedesk.security.agent_tokens import CredentialVerifier
+from disputedesk.security.agent_tokens import CredentialVerifier, NoAuth
 
 SERVER_NAME = "cases"
 DEFAULT_PORT = 8103
@@ -59,8 +59,8 @@ def build_server(
     read: ReadStore,
     write: CaseWriteStore,
     audit: AuditSink,
+    verifier: CredentialVerifier | NoAuth,
     clock: Clock = utc_now,
-    verifier: CredentialVerifier | None = None,
 ) -> AuditedMCPServer:
     server = AuditedMCPServer(
         SERVER_NAME,

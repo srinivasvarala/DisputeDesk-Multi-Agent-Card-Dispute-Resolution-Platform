@@ -14,6 +14,7 @@ from disputedesk.mcp_servers.common.audit import AuditedMCPServer, audited_write
 from disputedesk.mcp_servers.common.errors import ConflictError, NotFoundError
 from disputedesk.mcp_servers.common.params import CaseIdParam
 from disputedesk.mcp_servers.common.store import InMemoryStore
+from disputedesk.security.agent_tokens import NO_AUTH
 from tests.unit.mcp_helpers import TEST_ACTOR, call, error_text, last_audit, ok
 
 pytestmark = pytest.mark.anyio
@@ -26,7 +27,7 @@ def store() -> InMemoryStore:
 
 @pytest.fixture
 def server(store: InMemoryStore) -> AuditedMCPServer:
-    srv = AuditedMCPServer("probe", audit=store, clock=lambda: REFERENCE_TIME)
+    srv = AuditedMCPServer("probe", audit=store, clock=lambda: REFERENCE_TIME, verifier=NO_AUTH)
 
     @srv.tool()
     def echo(case_id: CaseIdParam) -> dict[str, str]:
@@ -95,7 +96,7 @@ async def test_audit_failure_fails_the_call_with_generic_message() -> None:
         def write_audit(self, entry: object) -> None:
             raise OSError("db password=hunter2 at 10.0.0.5")
 
-    srv = AuditedMCPServer("probe", audit=BrokenSink())
+    srv = AuditedMCPServer("probe", audit=BrokenSink(), verifier=NO_AUTH)
 
     @srv.tool()
     def ping() -> str:
@@ -107,7 +108,7 @@ async def test_audit_failure_fails_the_call_with_generic_message() -> None:
 
 
 async def test_cancelled_call_is_audited_as_cancelled(store: InMemoryStore) -> None:
-    srv = AuditedMCPServer("probe", audit=store, clock=lambda: REFERENCE_TIME)
+    srv = AuditedMCPServer("probe", audit=store, clock=lambda: REFERENCE_TIME, verifier=NO_AUTH)
 
     @srv.tool()
     async def slow() -> str:
@@ -214,3 +215,9 @@ def test_write_is_not_applied_when_its_audit_fails() -> None:
         )
     assert store.list_drafts("case_0002") == []
     assert store.cases["case_0002"] == before
+
+
+def test_a_server_without_a_verifier_choice_cannot_be_built() -> None:
+    """Credential checking has no silent default: NO_AUTH must be asked for."""
+    with pytest.raises(TypeError, match="verifier"):
+        AuditedMCPServer("probe", audit=InMemoryStore(generate()))  # type: ignore[call-arg]

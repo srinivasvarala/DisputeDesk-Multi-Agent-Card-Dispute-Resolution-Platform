@@ -136,6 +136,11 @@ class Runtime:
                 raise WorkflowConflictError(f"case {case_id} is not waiting for approval")
             self._claim_locked(case_id)
 
+    def release(self, case_id: str) -> None:
+        """Give back a claim whose run or resume will never be started."""
+        with self._lock:
+            self._active.discard(case_id)
+
     def run(self, case_id: str) -> None:
         """Run a claimed case from the start until it finishes or pauses."""
         self._drive(case_id, DisputeState(case_id=case_id))

@@ -317,3 +317,10 @@ Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 - Audit tamper resistance is shallow: the DB owner can disable the triggers; `GET` reads are not audited.
 - Injection resistance against a real model is untested until M7 (promptfoo red-team).
 - `.env` now needs `JWT_SECRET` (`openssl rand -hex 32`). `scripts/run_disputes.py` mints an approver token from it.
+
+### M5 code-review follow-ups (fixed)
+- **Stuck case:** a failed audit write after `claim_start`/`claim_resume` left the case claimed (409 on every retry). The claim is now released and the request fails; tests cover both routes.
+- **Audit flooding:** anonymous 401s no longer write rows (append-only table); they are logged. Authenticated 403s are still audited.
+- **Verifier is required:** `AuditedMCPServer` and `build_server` take `verifier` with no default; `NO_AUTH` is the explicit opt-out (standalone demo servers, single-server unit tests).
+- **Actor namespace:** API audit rows use `user:<sub>`.
+- Still open: reads are not audited (decision pending: audit them, or document the exception in CLAUDE.md); integration tests add permanent rows to the dev `audit_log`.
