@@ -1,0 +1,83 @@
+name: Evals
+
+# Quality gate: runs the golden set and the Promptfoo red-team against a real model.
+# It costs money and needs repository secrets, so it only runs when something that can change
+# model behaviour changes (or by hand).
+on:
+  pull_request:
+    paths:
+      - "src/disputedesk/agents/**"
+      - "src/disputedesk/guardrails/**"
+      - "src/disputedesk/graph/**"
+      - "src/disputedesk/rag/**"
+      - "src/disputedesk/evals/**"
+      - "src/disputedesk/llm.py"
+      - "data/policies/**"
+      - "evals/**"
+      - ".github/workflows/evals.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    # Forks cannot read secrets, so skip them.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: disputedesk
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/disputedesk
+      LLM_PROVIDER: anthropic
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_MODEL: claude-haiku-5-5
+      # Optional: grade with a different model than the one under test (repo variable).
+      EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
+      DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras --dev --group evals
+      - name: Cache RAG model weights (fastembed)
+        uses: actions/cache@v4
+        with:
+          path: .cache/models
+          key: fastembed-${{ hashFiles('src/disputedesk/config.py') }}
+          restore-keys: fastembed-
+      - name: Ingest the rulebook
+        run: uv run python -m disputedesk.rag.ingest
+      - name: Golden-set evals (fails if any threshold is missed)
+        id: golden
+        run: uv run python evals/run_evals.py --thresholds evals/thresholds.yml
+      - name: Promptfoo red-team (fails if any payload gets through)
+        if: ${{ !cancelled() }}
+        run: mkdir -p evals/results && uv run npx --yes promptfoo@0.126.0 eval -c evals/promptfoo/redteam.yaml --no-cache -o evals/results/promptfoo.json
+        env:
+          PROMPTFOO_DISABLE_TELEMETRY: "1"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: eval-results
+          path: evals/results/
+      - name: Post summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f evals/results/summary.md ]; then cat evals/results/summary.md >> "$GITHUB_STEP_SUMMARY"; fi

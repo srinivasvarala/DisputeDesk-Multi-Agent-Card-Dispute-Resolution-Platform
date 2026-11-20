@@ -46,7 +46,7 @@ class JudgeModel(DeepEvalBaseLLM):  # type: ignore[no-untyped-call]
 
     def generate(self, prompt: str, schema: type[BaseModel] | None = None) -> Any:
         reply = self._llm.complete(
-            system=SYSTEM, messages=[Message(role="user", content=prompt)], max_tokens=2048
+            system=SYSTEM, messages=[Message(role="user", content=prompt)], max_tokens=8192
         )
         if schema is None:
             return reply.text

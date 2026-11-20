@@ -82,4 +82,4 @@ def grade_letter(llm: LLMClient, case: GoldenCase, outcome: CaseOutcome) -> Lett
             untrusted("letter", outcome.letter),
         ]
     )
-    return complete_json(llm, system=JUDGE_SYSTEM, user=user, schema=LetterGrade, max_tokens=400)
+    return complete_json(llm, system=JUDGE_SYSTEM, user=user, schema=LetterGrade, max_tokens=2048)
