@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
 
+    # Evals only: the model that grades letters and citation faithfulness. None = same as the
+    # system under test. A judge from a different model family avoids self-preference bias.
+    eval_judge_provider: LLMProvider | None = None
+    eval_judge_model: str | None = None
+
     # --- Agents ---
     tool_timeout_seconds: float = 15.0
     tool_max_retries: int = 2

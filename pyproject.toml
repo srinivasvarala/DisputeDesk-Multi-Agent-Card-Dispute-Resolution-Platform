@@ -30,6 +30,7 @@ dependencies = [
     "pyjwt>=2.15.1",
     "spacy>=3.8.18",
     "uvicorn[standard]>=0.54.0",
+    "pyyaml>=6",
 ]
 
 [dependency-groups]
@@ -39,6 +40,10 @@ dev = [
     "pre-commit>=4.0",
     "pytest>=8.3",
     "ruff>=0.8",
+    "types-pyyaml>=6.0.12.20261113",
+]
+evals = [
+    "deepeval>=4.3.4",
 ]
 
 [build-system]
@@ -68,8 +73,8 @@ plugins = ["pydantic.mypy"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["nemoguardrails", "nemoguardrails.*", "langfuse", "langfuse.*"]
-ignore_missing_imports = true  # NeMo and the Langfuse v2 SDK ship no py.typed marker
+module = ["nemoguardrails", "nemoguardrails.*", "langfuse", "langfuse.*", "deepeval", "deepeval.*"]
+ignore_missing_imports = true  # NeMo, the Langfuse v2 SDK and DeepEval ship no py.typed marker
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

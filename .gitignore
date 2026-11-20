@@ -28,3 +28,8 @@ evals/results/
 
 # Downloaded model weights (fastembed)
 .cache/
+
+# DeepEval
+.deepeval/
+.deepeval_telemetry.txt
+.deepeval-cache.json
