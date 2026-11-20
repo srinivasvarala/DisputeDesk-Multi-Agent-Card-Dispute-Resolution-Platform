@@ -31,6 +31,7 @@ class CaseFacts(Model):
     amount_cents: int = Field(gt=0)
     claimed_reason: ReasonCode
     narrative: str
+    filed_at: datetime | None = None  # the filing date (the case's opened_at)
     # Fraud filing items, as recorded at filing. None = not recorded.
     fraud_declaration_signed: bool | None = None
     card_reissued: bool | None = None

@@ -92,3 +92,14 @@ def test_world_carries_the_new_tool_facts(cases: list[GoldenCase]) -> None:
     assert lost is not None and lost < txn("g12").posted_at - timedelta(hours=5)
     assert store.cases[ids["g10"]].fraud_declaration_signed is True
     assert store.cases[ids["g02"]].fraud_declaration_signed is None  # not a fraud filing
+
+
+def test_fixtures_are_consistent_with_the_rulebook_clocks(cases: list[GoldenCase]) -> None:
+    """A shipment cannot predate its charge, and a "not received" claim must be filed after the
+    15-day wait that follows the default expected delivery date (settlement + 30 days)."""
+    for c in cases:
+        if c.shipment is not None:
+            assert c.shipment.shipped_days_ago < c.days_ago, c.id
+        if c.expected.reason_code == "not_received":
+            filed_days_after_charge = c.days_ago - 1  # cases are filed one day before "now"
+            assert filed_days_after_charge >= 30 + 15, c.id

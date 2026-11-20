@@ -47,6 +47,9 @@ Rules:
 escalate because a detail is missing: use what the evidence and the cardholder's narrative say, \
 and lower your confidence if the gap matters. System records (carrier data, terminal entry \
 mode) outweigh the cardholder's narrative.
+- Timing is computed for you from the rulebook's time limits: `expected_delivery_date` (30 \
+days after settlement when none was promised), `waiting_period_elapsed`, \
+`within_filing_window`. Trust them; do not escalate over timing they already settle.
 - `carrier_approved` false means the tracking must be confirmed with the carrier before it \
 proves delivery. `delivery_address_matches` false means delivery is not proven (rulebook 04). \
 For an order above $250.00 delivery also needs `signature_confirmed` true.
@@ -174,17 +177,30 @@ def apply_escalation_rules(result: _Decision, evidence: Evidence) -> _Decision:
     )
 
 
-def filing_attributes(facts: CaseFacts, evidence: Evidence) -> str:
-    """Fraud filing items as structured attributes (booleans and a derived fact, no free text)."""
+def filing_attributes(facts: CaseFacts, route: Route, evidence: Evidence) -> str:
+    """Filing items and rulebook timing as structured attributes (booleans, dates and numbers
+    only: no free text, so nothing here can carry an instruction)."""
     attrs: dict[str, object] = {
         "fraud_declaration_signed": facts.fraud_declaration_signed,
         "card_reissued": facts.card_reissued,
     }
     if facts.card_reported_lost_at is not None:
+        attrs["card_reported_lost_at"] = facts.card_reported_lost_at.isoformat()
         attrs["card_reported_lost_before_charge"] = (
             facts.card_reported_lost_at < evidence.transaction.posted_at
         )
-    return "".join(f' {k}="{str(v).lower()}"' for k, v in attrs.items() if v is not None)
+    if facts.filed_at is not None:
+        attrs["filed_at"] = facts.filed_at.isoformat()
+        attrs.update(
+            rules.filing_timing(
+                route.reason_code, posted_at=evidence.transaction.posted_at, filed_at=facts.filed_at
+            )
+        )
+    return "".join(
+        f' {k}="{str(v).lower() if isinstance(v, bool) else v}"'
+        for k, v in attrs.items()
+        if v is not None
+    )
 
 
 def build_user_message(
@@ -197,7 +213,7 @@ def build_user_message(
 ) -> str:
     parts = [
         f'<case amount_cents="{facts.amount_cents}" reason_code="{route.reason_code}" '
-        f'risk_tier="{route.risk_tier}"{filing_attributes(facts, evidence)}/>',
+        f'risk_tier="{route.risk_tier}"{filing_attributes(facts, route, evidence)}/>',
         untrusted("cardholder_narrative", facts.narrative),
         untrusted("evidence", evidence.model_dump_json(indent=1)),
         untrusted("policy_answer", policy.model_dump_json(indent=1)),

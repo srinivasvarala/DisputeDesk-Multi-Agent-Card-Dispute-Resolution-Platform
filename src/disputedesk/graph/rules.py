@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from disputedesk.db.models import ReasonCode, RiskTier
 
 
@@ -43,3 +45,26 @@ def escalation_override(*, confidence: float, disputes_90d: int) -> str | None:
             f"(rulebook 11, trigger 2)"
         )
     return None
+
+
+# Rulebook 08 (time limits) and 00 (glossary): plain arithmetic the analyst should not redo.
+DEFAULT_DELIVERY_DAYS = 30  # expected delivery = settlement + 30 days when none was promised
+R20_WAIT_DAYS = 15
+FILING_WINDOW_DAYS = 120
+
+
+def filing_timing(
+    reason: ReasonCode, *, posted_at: datetime, filed_at: datetime
+) -> dict[str, str | bool]:
+    """Timing facts for a filing, as the rulebook defines them. Empty for reasons whose clock
+    starts at an event this module cannot see (for example a delivery that is not recorded)."""
+    if reason == ReasonCode.NOT_RECEIVED:
+        expected = posted_at + timedelta(days=DEFAULT_DELIVERY_DAYS)
+        return {
+            "expected_delivery_date": expected.date().isoformat(),
+            "waiting_period_elapsed": filed_at >= expected + timedelta(days=R20_WAIT_DAYS),
+            "within_filing_window": filed_at <= expected + timedelta(days=FILING_WINDOW_DAYS),
+        }
+    if reason in (ReasonCode.FRAUD, ReasonCode.DUPLICATE):
+        return {"within_filing_window": filed_at <= posted_at + timedelta(days=FILING_WINDOW_DAYS)}
+    return {}

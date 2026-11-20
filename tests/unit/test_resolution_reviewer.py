@@ -267,10 +267,28 @@ def test_filing_items_reach_the_prompt_as_structured_attributes(case_facts: Case
             "card_reported_lost_at": posted - timedelta(hours=5),
         }
     )
-    assert filing_attributes(facts, evidence) == (
-        ' fraud_declaration_signed="true" card_reissued="false"'
-        ' card_reported_lost_before_charge="true"'
-    )
+    text = filing_attributes(facts, ROUTE, evidence)
+    assert ' fraud_declaration_signed="true" card_reissued="false"' in text
+    assert 'card_reported_lost_before_charge="true"' in text
+    assert "card_reported_lost_at=" in text
     later = facts.model_copy(update={"card_reported_lost_at": posted + timedelta(hours=1)})
-    assert 'card_reported_lost_before_charge="false"' in filing_attributes(later, evidence)
-    assert filing_attributes(case_facts, evidence) == ""  # nothing recorded, nothing said
+    assert 'card_reported_lost_before_charge="false"' in filing_attributes(later, ROUTE, evidence)
+    assert filing_attributes(case_facts, ROUTE, evidence) == ""  # nothing recorded, nothing said
+
+
+def test_timing_facts_come_from_the_rulebook_not_the_model(case_facts: CaseFacts) -> None:
+    from datetime import timedelta
+
+    from disputedesk.agents.resolution import filing_attributes
+
+    evidence = _stub_evidence()
+    posted = evidence.transaction.posted_at
+    # R20: expected delivery = settlement + 30 days; the wait ends 15 days later.
+    late = case_facts.model_copy(update={"filed_at": posted + timedelta(days=46)})
+    text = filing_attributes(late, ROUTE, evidence)
+    assert 'waiting_period_elapsed="true"' in text
+    assert 'within_filing_window="true"' in text
+    early = case_facts.model_copy(update={"filed_at": posted + timedelta(days=40)})
+    assert 'waiting_period_elapsed="false"' in filing_attributes(early, ROUTE, evidence)
+    stale = case_facts.model_copy(update={"filed_at": posted + timedelta(days=200)})
+    assert 'within_filing_window="false"' in filing_attributes(stale, ROUTE, evidence)

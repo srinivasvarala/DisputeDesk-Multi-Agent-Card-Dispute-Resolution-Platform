@@ -28,6 +28,7 @@ class WorkflowSteps:
             amount_cents=case["amount_cents"],
             claimed_reason=case["reason_code"],
             narrative=case["customer_narrative"],
+            filed_at=case.get("opened_at"),
             fraud_declaration_signed=case.get("fraud_declaration_signed"),
             card_reissued=case.get("card_reissued"),
             card_reported_lost_at=case.get("card_reported_lost_at"),
