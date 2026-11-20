@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
 
+    # --- Agents ---
+    tool_timeout_seconds: float = 15.0
+    tool_max_retries: int = 2
+    # Cases at or above this amount, or from high-risk merchants, need a human decision.
+    human_approval_threshold_cents: int = 50_000
+
     # --- RAG ---
     # Local ONNX models via fastembed (free, no API key). Weights download on first use into
     # model_cache_dir. "fake" providers are deterministic and offline, for unit tests.
