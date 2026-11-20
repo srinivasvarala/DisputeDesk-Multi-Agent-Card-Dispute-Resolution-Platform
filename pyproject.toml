@@ -45,6 +45,9 @@ dev = [
 evals = [
     "deepeval>=4.3.4",
 ]
+ui = [
+    "streamlit>=1.67.0",
+]
 
 [build-system]
 requires = ["hatchling"]
