@@ -1,0 +1,67 @@
+"""Deterministic workflow steps (no LLM): read the case, and move it through its statuses.
+
+They use the `cases` server's tools (allowlist: get_case, update_status), so every status change
+is validated by the workflow state machine and audited by the server.
+"""
+
+from __future__ import annotations
+
+from disputedesk.agents.toolbox import ToolBox
+from disputedesk.db.models import CaseStatus, Decision
+from disputedesk.graph.builder import Update
+from disputedesk.graph.state import MAX_REVISIONS, CaseFacts, DisputeState
+
+
+class WorkflowSteps:
+    def __init__(self, tools: ToolBox) -> None:
+        self._tools = tools
+
+    def intake(self, state: DisputeState) -> Update:
+        """Load the case and move it open -> in_review (skipped if already past `open`)."""
+        view = self._tools.call("get_case", {"case_id": state.case_id})
+        case = view["case"]
+        if case["status"] == CaseStatus.OPEN:
+            self._set_status(state.case_id, CaseStatus.IN_REVIEW, "workflow started")
+        facts = CaseFacts(
+            txn_id=case["txn_id"],
+            customer_id=case["customer_id"],
+            amount_cents=case["amount_cents"],
+            claimed_reason=case["reason_code"],
+            narrative=case["customer_narrative"],
+        )
+        return {"facts": facts}
+
+    def request_approval(self, state: DisputeState) -> Update:
+        self._set_status(state.case_id, CaseStatus.PENDING_APPROVAL, "waiting for human approval")
+        return {}
+
+    def finalize(self, state: DisputeState) -> Update:
+        if state.draft is None:
+            raise ValueError("cannot finalize without a draft")
+        status = (
+            CaseStatus.RESOLVED_ACCEPTED
+            if state.draft.decision == Decision.ACCEPT
+            else CaseStatus.RESOLVED_REJECTED
+        )
+        who = f"approved by {state.human.approver}" if state.human else "no approval needed"
+        self._set_status(state.case_id, status, f"draft v{state.draft.version} final; {who}")
+        return {"final_status": status}
+
+    def escalate(self, state: DisputeState) -> Update:
+        self._set_status(state.case_id, CaseStatus.ESCALATED, escalation_reason(state))
+        return {"final_status": CaseStatus.ESCALATED}
+
+    def _set_status(self, case_id: str, status: CaseStatus, reason: str) -> None:
+        self._tools.call(
+            "update_status", {"case_id": case_id, "new_status": status, "reason": reason}
+        )
+
+
+def escalation_reason(state: DisputeState) -> str:
+    if state.human is not None and not state.human.approved:
+        return f"human reviewer {state.human.approver} did not approve: {state.human.note}"[:1000]
+    if state.draft is not None and state.draft.decision == Decision.ESCALATE:
+        return "resolution agent could not decide and escalated"
+    if state.revision_count > MAX_REVISIONS:
+        return f"reviewer still not satisfied after {MAX_REVISIONS} revisions"
+    return "escalated by workflow"

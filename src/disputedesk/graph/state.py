@@ -20,6 +20,16 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class CaseFacts(Model):
+    """The case record as intake read it. `narrative` is untrusted customer text."""
+
+    txn_id: str
+    customer_id: str
+    amount_cents: int = Field(gt=0)
+    claimed_reason: ReasonCode
+    narrative: str
+
+
 class Route(Model):
     """Router output. `risk_tier` is computed by plain Python rules, not by the LLM."""
 
@@ -64,6 +74,7 @@ class DisputeState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: str
+    facts: CaseFacts | None = None
     route: Route | None = None
     evidence: Evidence | None = None
     policy: PolicyAnswer | None = None
