@@ -15,6 +15,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 
+from disputedesk.agents.policy import PolicySearch
 from disputedesk.llm import (
     LLMClient,
     LLMError,
@@ -23,6 +24,7 @@ from disputedesk.llm import (
     LLMTruncatedError,
     Message,
 )
+from disputedesk.rag.retriever import RetrievedChunk, RetrieverError
 
 
 class CallFailedError(RuntimeError):
@@ -94,3 +96,24 @@ class ResilientLLM:
             )
         except CallFailedError as exc:
             raise LLMError(str(exc)) from exc
+
+
+class ResilientSearch:
+    """A `PolicySearch` that adds a timeout and retries to another one (the RAG retriever)."""
+
+    def __init__(self, inner: PolicySearch, *, timeout: float, retries: int) -> None:
+        self._inner = inner
+        self._timeout = timeout
+        self._retries = retries
+
+    def search(self, query: str, *, k: int = 5) -> list[RetrievedChunk]:
+        try:
+            return call_with_retry(
+                lambda: self._inner.search(query, k=k),
+                name="policy_search",
+                timeout=self._timeout,
+                retries=self._retries,
+                non_retryable=(ValueError,),  # a bad query will not get better
+            )
+        except CallFailedError as exc:
+            raise RetrieverError(str(exc)) from exc
