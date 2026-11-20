@@ -86,10 +86,12 @@ class Runtime:
         # `final_status`, so that is the completion signal.
         if state.final_status is not None:
             workflow = WorkflowState.COMPLETED
+        elif case.status == CaseStatus.ESCALATED:
+            # A crashed run escalates the case. Checked before the interrupt: a run that
+            # crashed while resuming still has its old interrupt in the checkpoint.
+            workflow = WorkflowState.FAILED
         elif any(task.interrupts for task in snap.tasks):
             workflow = WorkflowState.AWAITING_APPROVAL
-        elif case.status == CaseStatus.ESCALATED:
-            workflow = WorkflowState.FAILED  # a crashed run escalates the case
         else:
             workflow = WorkflowState.RUNNING
         return DisputeView(
@@ -106,19 +108,26 @@ class Runtime:
     # --- driving -------------------------------------------------------------------------
 
     def claim_start(self, case_id: str) -> None:
-        """Reserve a new run. Raises CaseNotFoundError / WorkflowConflictError."""
-        case = self.store.get_case(case_id)
-        if case is None:
-            raise CaseNotFoundError(case_id)
-        if case.status != CaseStatus.OPEN or self.graph.get_state(_config(case_id)).values:
-            raise WorkflowConflictError(f"case {case_id} is {case.status}; only open cases start")
-        self._claim(case_id)
+        """Reserve a new run. Raises CaseNotFoundError / WorkflowConflictError.
+
+        The state check and the claim happen under one lock, so two requests cannot both pass
+        the check and then both run."""
+        with self._lock:
+            case = self.store.get_case(case_id)
+            if case is None:
+                raise CaseNotFoundError(case_id)
+            if case.status != CaseStatus.OPEN or self.graph.get_state(_config(case_id)).values:
+                raise WorkflowConflictError(
+                    f"case {case_id} is {case.status}; only open cases start"
+                )
+            self._claim_locked(case_id)
 
     def claim_resume(self, case_id: str) -> None:
         """Reserve a resume. Raises CaseNotFoundError / WorkflowConflictError."""
-        if self.view(case_id).workflow != WorkflowState.AWAITING_APPROVAL:
-            raise WorkflowConflictError(f"case {case_id} is not waiting for approval")
-        self._claim(case_id)
+        with self._lock:
+            if self.view(case_id).workflow != WorkflowState.AWAITING_APPROVAL:
+                raise WorkflowConflictError(f"case {case_id} is not waiting for approval")
+            self._claim_locked(case_id)
 
     def run(self, case_id: str) -> None:
         """Run a claimed case from the start until it finishes or pauses."""
@@ -128,11 +137,10 @@ class Runtime:
         """Continue a claimed, paused case with the human's decision."""
         self._drive(case_id, Command(resume=decision.model_dump()))
 
-    def _claim(self, case_id: str) -> None:
-        with self._lock:
-            if case_id in self._active:
-                raise WorkflowConflictError(f"case {case_id} is already being processed")
-            self._active.add(case_id)
+    def _claim_locked(self, case_id: str) -> None:
+        if case_id in self._active:
+            raise WorkflowConflictError(f"case {case_id} is already being processed")
+        self._active.add(case_id)
 
     def _drive(self, case_id: str, graph_input: DisputeState | Command[Any]) -> None:
         try:
@@ -147,8 +155,10 @@ class Runtime:
     def _fail(self, case_id: str, exc: Exception) -> None:
         """Do not leave a crashed case in review: escalate it and say why in the audit log."""
         reason = f"workflow failed: {type(exc).__name__}"
+        # Only the exception type goes to the audit log: messages from validation or parsing
+        # errors can echo customer text. The full detail is in the application log above.
         DecisionAuditor(self.store, allowlists.SYSTEM).record(
-            "workflow_failed", case_id, {}, outcome=AuditOutcome.ERROR, error=str(exc)[:500]
+            "workflow_failed", case_id, {}, outcome=AuditOutcome.ERROR, error=type(exc).__name__
         )
         try:
             self.failure_tools.call(

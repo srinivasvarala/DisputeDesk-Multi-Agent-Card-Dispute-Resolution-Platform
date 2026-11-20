@@ -198,3 +198,39 @@ def test_empty_next_between_nodes_is_not_reported_as_completed(store: InMemorySt
     finished = DisputeState(case_id=case_id, final_status=CaseStatus.RESOLVED_ACCEPTED)
     runtime.graph = _FakeGraph(_Snapshot(finished.model_dump(), ()))  # type: ignore[assignment]
     assert runtime.view(case_id).workflow == "completed"
+
+
+def test_a_run_that_crashes_while_resuming_is_failed_and_cannot_be_approved_again(
+    store: InMemoryStore, settings: Settings
+) -> None:
+    """After the human approves, finalize crashes: the case is escalated, `GET` must say
+    failed (not awaiting approval) and a second approval must be refused."""
+    llm, _ = fake_llm()
+    runtime = build_runtime(
+        settings=settings,
+        llm=llm,
+        retriever=StubRetriever(),
+        store=store,
+        checkpointer=InMemorySaver(),
+    )
+    client = TestClient(create_app(runtime))
+    case_id = open_case(store, settings, approval=True)
+    client.post("/disputes", json={"case_id": case_id})
+
+    original = store.set_case_status
+
+    def boom(case_id: str, **kwargs: object) -> object:
+        if kwargs["new"] in (CaseStatus.RESOLVED_ACCEPTED, CaseStatus.RESOLVED_REJECTED):
+            raise RuntimeError("db down")
+        return original(case_id, **kwargs)  # type: ignore[arg-type]
+
+    store.set_case_status = boom  # type: ignore[method-assign,assignment]
+    body = {"approved": True, "approver": "ana"}
+    assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 202
+
+    view = client.get(f"/disputes/{case_id}").json()
+    assert view["workflow"] == "failed"
+    assert view["case_status"] == "escalated"
+    assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 409
+    failure = [e for e in store.audit if e.tool == "workflow_failed"][-1]
+    assert failure.error == "ToolCallError"  # type only, no message text

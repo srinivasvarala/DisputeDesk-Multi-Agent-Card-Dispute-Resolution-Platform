@@ -208,7 +208,7 @@ Retrieval results on the 25-question set (k=5):
 ### Known gaps / carried forward
 - **No refund cap or required-evidence check in code yet.** Only the approval threshold is enforced (router rules). The refund cap, per-agent allowlist enforcement at the guardrail layer, and PII redaction are M4 (`policy_rules.py`, `guardrails/interface.py`).
 - **No auth:** the `approver` name comes from the request body. JWT roles are M5.
-- **Single API process:** the "already being processed" guard is in memory. Several workers would need a database lock.
+- **Single API process:** the "already being processed" guard is in memory. Several workers would need a database lock. After a restart mid-run a case keeps its checkpoint but nothing drives it: `POST /disputes` and `/approve` both return 409, so it needs a manual reset (no recovery endpoint yet).
 - **Timeouts abandon, not cancel, a hung LLM or retrieval thread** (Python cannot kill a thread); the result is dropped. Tool calls do cancel (`anyio.fail_after`).
 - **A crashed run is escalated, not retried or resumable** through the API.
 - **Agent quality with a real model is untested** (fake LLM only); that is M7. Prompts have not been tuned.
