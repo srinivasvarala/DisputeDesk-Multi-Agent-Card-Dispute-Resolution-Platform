@@ -45,7 +45,9 @@ def demo_responder(system: str, messages: Sequence[Message]) -> str:
         case "evidence":
             merchant_wins = "&quot;status&quot;: &quot;delivered&quot;" in user
             leaning = "supports_merchant" if merchant_wins else "supports_customer"
-            return json.dumps({"summary": f"The facts point one way ({leaning}).", "leaning": leaning})
+            return json.dumps(
+                {"summary": f"The facts point one way ({leaning}).", "leaning": leaning}
+            )
         case "policy":
             excerpt = _EXCERPT_1.search(user)
             quote = excerpt.group(1)[:200] if excerpt else ""

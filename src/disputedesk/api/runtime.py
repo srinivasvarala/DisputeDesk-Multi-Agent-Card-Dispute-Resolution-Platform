@@ -1,0 +1,218 @@
+"""What the API needs at run time: the compiled graph, the case store and run bookkeeping.
+
+`Runtime` takes its parts as arguments, so tests can pass in-memory ones. `open_runtime`
+builds the real ones from settings: Postgres store, Postgres checkpointer, the RAG retriever
+and the configured LLM.
+
+One process runs the graph. `claim` stops two requests from driving the same case at once;
+across several API processes this would need a database lock instead (a known gap).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+from disputedesk.agents import allowlists
+from disputedesk.agents.common import DecisionAuditor
+from disputedesk.agents.fake_llm import demo_responder
+from disputedesk.agents.policy import PolicySearch
+from disputedesk.agents.toolbox import ToolBox, tool_index
+from disputedesk.api.schemas import ApprovalRequest, DisputeView, WorkflowState
+from disputedesk.config import Settings, get_settings
+from disputedesk.db import apply_schema, connect
+from disputedesk.db.models import AuditOutcome, CaseStatus
+from disputedesk.graph.builder import build_graph
+from disputedesk.graph.state import DisputeState
+from disputedesk.graph.wiring import Dependencies, build_nodes
+from disputedesk.llm import FakeClient, LLMClient, get_embedder, get_llm, get_reranker
+from disputedesk.mcp_servers.cases import server as cases_server
+from disputedesk.mcp_servers.common.store import AuditSink, CaseWriteStore, PostgresStore, ReadStore
+from disputedesk.mcp_servers.merchant import server as merchant_server
+from disputedesk.mcp_servers.transactions import server as transactions_server
+from disputedesk.rag.retriever import Retriever
+
+logger = logging.getLogger(__name__)
+
+Graph = CompiledStateGraph[DisputeState, None, DisputeState, DisputeState]
+
+
+class FullStore(ReadStore, CaseWriteStore, AuditSink, Protocol):
+    """Everything `PostgresStore` and `InMemoryStore` both provide."""
+
+
+class CaseNotFoundError(LookupError):
+    pass
+
+
+class WorkflowConflictError(RuntimeError):
+    """The request does not fit the workflow's current state (already started, not waiting...)."""
+
+
+@dataclass
+class Runtime:
+    graph: Graph
+    store: FullStore
+    failure_tools: ToolBox  # used only to escalate a case whose workflow crashed
+    _active: set[str] = field(default_factory=set)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    # --- reading -------------------------------------------------------------------------
+
+    def view(self, case_id: str) -> DisputeView:
+        case = self.store.get_case(case_id)
+        if case is None:
+            raise CaseNotFoundError(case_id)
+        snap = self.graph.get_state(_config(case_id))
+        if not snap.values:
+            return DisputeView(
+                case_id=case_id, case_status=case.status, workflow=WorkflowState.NOT_STARTED
+            )
+        state = DisputeState.model_validate(snap.values)
+        if any(task.interrupts for task in snap.tasks):
+            workflow = WorkflowState.AWAITING_APPROVAL
+        elif not snap.next:
+            workflow = WorkflowState.COMPLETED
+        elif case.status == CaseStatus.ESCALATED:
+            workflow = WorkflowState.FAILED  # a crashed run escalates the case
+        else:
+            workflow = WorkflowState.RUNNING
+        return DisputeView(
+            case_id=case_id,
+            case_status=case.status,
+            workflow=workflow,
+            route=state.route,
+            draft=state.draft,
+            review=state.review,
+            revision_count=state.revision_count,
+            path=state.path,
+        )
+
+    # --- driving -------------------------------------------------------------------------
+
+    def claim_start(self, case_id: str) -> None:
+        """Reserve a new run. Raises CaseNotFoundError / WorkflowConflictError."""
+        case = self.store.get_case(case_id)
+        if case is None:
+            raise CaseNotFoundError(case_id)
+        if case.status != CaseStatus.OPEN or self.graph.get_state(_config(case_id)).values:
+            raise WorkflowConflictError(f"case {case_id} is {case.status}; only open cases start")
+        self._claim(case_id)
+
+    def claim_resume(self, case_id: str) -> None:
+        """Reserve a resume. Raises CaseNotFoundError / WorkflowConflictError."""
+        if self.view(case_id).workflow != WorkflowState.AWAITING_APPROVAL:
+            raise WorkflowConflictError(f"case {case_id} is not waiting for approval")
+        self._claim(case_id)
+
+    def run(self, case_id: str) -> None:
+        """Run a claimed case from the start until it finishes or pauses."""
+        self._drive(case_id, DisputeState(case_id=case_id))
+
+    def resume(self, case_id: str, decision: ApprovalRequest) -> None:
+        """Continue a claimed, paused case with the human's decision."""
+        self._drive(case_id, Command(resume=decision.model_dump()))
+
+    def _claim(self, case_id: str) -> None:
+        with self._lock:
+            if case_id in self._active:
+                raise WorkflowConflictError(f"case {case_id} is already being processed")
+            self._active.add(case_id)
+
+    def _drive(self, case_id: str, graph_input: DisputeState | Command[Any]) -> None:
+        try:
+            self.graph.invoke(graph_input, _config(case_id))
+        except Exception as exc:
+            logger.exception("workflow failed for %s", case_id)
+            self._fail(case_id, exc)
+        finally:
+            with self._lock:
+                self._active.discard(case_id)
+
+    def _fail(self, case_id: str, exc: Exception) -> None:
+        """Do not leave a crashed case in review: escalate it and say why in the audit log."""
+        reason = f"workflow failed: {type(exc).__name__}"
+        DecisionAuditor(self.store, allowlists.SYSTEM).record(
+            "workflow_failed", case_id, {}, outcome=AuditOutcome.ERROR, error=str(exc)[:500]
+        )
+        try:
+            self.failure_tools.call(
+                "update_status",
+                {"case_id": case_id, "new_status": CaseStatus.ESCALATED, "reason": reason},
+            )
+        except Exception:
+            logger.exception("could not escalate failed case %s", case_id)
+
+
+def _config(case_id: str) -> Any:
+    return {"configurable": {"thread_id": case_id}}
+
+
+def build_runtime(
+    *,
+    settings: Settings,
+    llm: LLMClient,
+    retriever: PolicySearch,
+    store: FullStore,
+    checkpointer: BaseCheckpointSaver[Any] | None,
+) -> Runtime:
+    servers = [
+        transactions_server.build_server(store, store),
+        merchant_server.build_server(store, store),
+        cases_server.build_server(store, store, store),
+    ]
+    deps = Dependencies(
+        settings=settings, llm=llm, retriever=retriever, servers=servers, audit=store
+    )
+    graph = build_graph(build_nodes(deps), checkpointer)
+    failure_tools = ToolBox(
+        agent=allowlists.SYSTEM,
+        allowed=allowlists.ALLOWLISTS[allowlists.SYSTEM],
+        tools=tool_index(servers),
+        audit=store,
+        timeout=settings.tool_timeout_seconds,
+        retries=settings.tool_max_retries,
+    )
+    return Runtime(graph=graph, store=store, failure_tools=failure_tools)
+
+
+@contextmanager
+def open_runtime(settings: Settings | None = None) -> Iterator[Runtime]:
+    """The real thing: Postgres for data and checkpoints, real retriever, configured LLM."""
+    settings = settings or get_settings()
+    llm: LLMClient = (
+        FakeClient(demo_responder) if settings.llm_provider == "fake" else get_llm(settings)
+    )
+    with (
+        connect(settings.database_url) as conn,
+        connect(settings.database_url) as rag_conn,
+        ConnectionPool(
+            settings.database_url,
+            min_size=1,
+            max_size=4,
+            kwargs={"autocommit": True, "row_factory": dict_row},
+            open=True,
+        ) as pool,
+    ):
+        apply_schema(conn)
+        checkpointer = PostgresSaver(pool)  # type: ignore[arg-type]
+        checkpointer.setup()
+        retriever = Retriever(rag_conn, get_embedder(settings), get_reranker(settings))
+        yield build_runtime(
+            settings=settings,
+            llm=llm,
+            retriever=retriever,
+            store=PostgresStore(conn),
+            checkpointer=checkpointer,
+        )
