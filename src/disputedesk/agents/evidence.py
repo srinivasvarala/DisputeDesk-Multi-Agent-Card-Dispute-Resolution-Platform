@@ -19,6 +19,7 @@ from disputedesk.agents import allowlists
 from disputedesk.agents.common import DecisionAuditor, complete_json, untrusted
 from disputedesk.agents.toolbox import ToolBox
 from disputedesk.db.models import AuditOutcome, Merchant, ReasonCode, Transaction
+from disputedesk.graph import rules
 from disputedesk.graph.state import CaseFacts, Evidence, Leaning, Route
 from disputedesk.llm import LLMClient
 from disputedesk.mcp_servers.merchant.server import DeliveryStatus, DisputeRate
@@ -61,7 +62,9 @@ class EvidenceAgent:
             self._tools.call("get_profile", {"merchant_id": txn.merchant_id})
         )
         history = CustomerHistory.model_validate(
-            self._tools.call("get_history", {"customer_id": txn.customer_id})
+            self._tools.call(
+                "get_history", {"customer_id": txn.customer_id, "days": rules.HISTORY_DAYS}
+            )
         )
         rate = DisputeRate.model_validate(
             self._tools.call("get_dispute_rate", {"merchant_id": txn.merchant_id})

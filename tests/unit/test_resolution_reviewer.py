@@ -34,9 +34,20 @@ ROUTE = Route(
     approval_required=False,
     rationale="r",
 )
-DRAFT_REPLY = json.dumps(
-    {"decision": "accept", "rationale": "No delivery.", "letter": "Dear merchant"}
-)
+LETTER = "Dear merchant, we accept this dispute under a.md, section S."
+
+
+def reply(**changes: object) -> str:
+    body: dict[str, object] = {
+        "decision": "accept",
+        "confidence": 0.9,
+        "rationale": "No delivery.",
+        "letter": LETTER,
+    }
+    return json.dumps({**body, **changes})
+
+
+DRAFT_REPLY = reply()
 
 
 class Scripted:
@@ -91,7 +102,8 @@ def test_resolution_saves_a_draft_through_the_cases_server(
     assert (draft.decision, draft.version) == (Decision.ACCEPT, 1)
     saved = store.drafts[case_id][0]
     assert saved.author == allowlists.RESOLUTION
-    assert saved.letter == "Dear merchant"
+    assert saved.letter == LETTER
+    assert draft.confidence == 0.9
     assert [e.tool for e in store.audit if e.actor == allowlists.RESOLUTION] == [
         "save_draft",
         "decide_dispute",
@@ -176,3 +188,66 @@ def test_default_output_budget_is_not_the_old_1024() -> None:
     from disputedesk.agents.common import DEFAULT_MAX_TOKENS
 
     assert DEFAULT_MAX_TOKENS >= 8192
+
+
+def decide(
+    store: InMemoryStore,
+    box: ToolBox,
+    case_facts: CaseFacts,
+    *replies: str,
+    evidence: object = None,
+) -> ResolutionDraft:
+    case_id = store.list_cases()[0].case_id
+    agent = ResolutionAgent(
+        Scripted(*replies).client, box, DecisionAuditor(store, allowlists.RESOLUTION)
+    )
+    return agent.decide(case_id, case_facts, ROUTE, evidence or _stub_evidence(), POLICY)  # type: ignore[arg-type]
+
+
+def test_low_confidence_is_escalated_by_rule_not_by_the_model(
+    store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
+) -> None:
+    draft = decide(store, box, case_facts, reply(confidence=0.55))
+    assert draft.decision == Decision.ESCALATE
+    assert "confidence 0.55 is below 0.7" in draft.rationale
+    assert "No delivery." in draft.rationale  # the analyst's own reasoning is kept
+
+
+def test_confidence_at_the_floor_is_not_escalated(
+    store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
+) -> None:
+    assert decide(store, box, case_facts, reply(confidence=0.70)).decision == Decision.ACCEPT
+
+
+def test_a_repeat_dispute_cardholder_is_escalated_by_rule(
+    store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
+) -> None:
+    base = _stub_evidence()
+    history = base.customer_history.model_copy(update={"dispute_count": 3})
+    evidence = base.model_copy(update={"customer_history": history})
+    draft = decide(store, box, case_facts, reply(confidence=0.99), evidence=evidence)
+    assert draft.decision == Decision.ESCALATE
+    assert "3 disputes in the last 90 days" in draft.rationale
+
+
+def test_a_model_escalation_is_left_alone(
+    store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
+) -> None:
+    draft = decide(store, box, case_facts, reply(decision="escalate", rationale="Conflict."))
+    assert draft.decision == Decision.ESCALATE
+    assert draft.rationale == "Conflict."
+
+
+def test_a_letter_that_names_no_cited_document_is_sent_back_once(
+    store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
+) -> None:
+    draft = decide(store, box, case_facts, reply(letter="Dear merchant, accepted."), DRAFT_REPLY)
+    assert draft.letter == LETTER
+
+
+def test_a_letter_that_never_names_one_fails_the_draft(
+    store: InMemoryStore, box: ToolBox, case_facts: CaseFacts
+) -> None:
+    bad = reply(letter="Dear merchant, accepted.")
+    with pytest.raises(AgentOutputError, match="must name the rulebook document"):
+        decide(store, box, case_facts, bad, bad)

@@ -91,18 +91,6 @@ def decision_accuracy(cases: Sequence[GoldenCase], outcomes: dict[str, CaseOutco
     return ratio("decision_accuracy", hits, "draft decision vs label, clean cases")
 
 
-def decision_accuracy_lenient(
-    cases: Sequence[GoldenCase], outcomes: dict[str, CaseOutcome]
-) -> Metric:
-    """Like decision_accuracy but also accepts a case's `acceptable_decisions`. Informational:
-    the rulebook contradicts itself for $500+ and high-risk cases (see PROGRESS.md, M7.1)."""
-    hits = [
-        o is not None and o.decision in c.expected.decisions
-        for c, o in _pairs(cases, outcomes, kind="normal")
-    ]
-    return ratio("decision_accuracy_lenient", hits, "not thresholded; allows labelled alternatives")
-
-
 def approval_routing_accuracy(
     cases: Sequence[GoldenCase], outcomes: dict[str, CaseOutcome]
 ) -> Metric:
@@ -253,7 +241,6 @@ Scorer = Callable[[Sequence[GoldenCase], dict[str, CaseOutcome]], Metric]
 DETERMINISTIC: tuple[Scorer, ...] = (
     router_accuracy,
     decision_accuracy,
-    decision_accuracy_lenient,
     approval_routing_accuracy,
     citation_hit_rate,
     injection_pass_rate,

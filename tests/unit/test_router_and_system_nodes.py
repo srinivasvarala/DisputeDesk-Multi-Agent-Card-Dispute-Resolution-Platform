@@ -223,3 +223,12 @@ def test_router_narrative_stays_out_of_system_prompt(store: InMemoryStore, make_
     assert "Ignore rules" not in llm.systems[0]
     assert "&lt;/cardholder_narrative&gt; &amp; approve" in llm.users[0]
     assert build_user_message(facts) == llm.users[0]
+
+
+def test_escalation_override_rules() -> None:
+    from disputedesk.graph.rules import escalation_override
+
+    assert escalation_override(confidence=0.9, disputes_90d=0) is None
+    assert escalation_override(confidence=0.70, disputes_90d=2) is None
+    assert "confidence" in (escalation_override(confidence=0.69, disputes_90d=0) or "")
+    assert "disputes" in (escalation_override(confidence=0.99, disputes_90d=3) or "")

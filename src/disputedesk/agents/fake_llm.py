@@ -24,6 +24,7 @@ AGENT_PROMPTS = {
 _REASON = re.compile(r"<claimed_reason>(\w+)</claimed_reason>")
 _EXCERPT_1 = re.compile(r'<excerpt id="1" [^>]*>\n(.*?)\n</excerpt>', re.DOTALL)
 _AMOUNT = re.compile(r'amount_cents="(\d+)"')
+_SOURCE = re.compile(r"&quot;source&quot;: &quot;([^&]+)&quot;")
 
 
 def agent_of(system: str) -> str:
@@ -58,12 +59,19 @@ def demo_responder(system: str, messages: Sequence[Message]) -> str:
             decision = "reject" if reject else "accept"
             amount = _AMOUNT.search(user)
             cents = int(amount.group(1)) if amount else 0
+            source = _SOURCE.search(user)
+            cited = source.group(1) if source else "the rulebook"
             letter = (
                 f"Dear merchant, we have decided to {decision} this dispute for "
-                f"${cents / 100:,.2f}, based on the evidence on file and the DisputeDesk Rulebook."
+                f"${cents / 100:,.2f}, based on the evidence on file and {cited}."
             )
             return json.dumps(
-                {"decision": decision, "rationale": "Based on the evidence.", "letter": letter}
+                {
+                    "decision": decision,
+                    "confidence": 0.9,
+                    "rationale": "Based on the evidence.",
+                    "letter": letter,
+                }
             )
         case _:
             return json.dumps({"verdict": "approve", "feedback": ""})

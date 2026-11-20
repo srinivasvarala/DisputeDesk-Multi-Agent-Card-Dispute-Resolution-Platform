@@ -9,14 +9,19 @@ An automated analyst may finalise a decision, accept or reject, only when the di
 **below $500.00**, the merchant is not in the high risk tier (see
 `13-merchant-risk-monitoring.md`) and no escalation trigger below applies. A refund of $500.00 or
 more must be approved by a human approver before it is paid. A reject of a dispute of $500.00 or
-more, or against a high-risk merchant, is also decided by a human approver.
+more, or against a high-risk merchant, is also decided by a human approver. In every such case
+the analyst's draft is a recommendation: the approver's decision is the final one.
 
 The decision letter must cite the rule relied on.
 
 ## Mandatory escalation triggers
 
-A case must be escalated to a human approver, without an automated final decision, when any of
-the following is true:
+A case must go to a human approver, who makes the final decision, when any of the following is
+true. The automated analyst never finalises such a case. It still drafts a recommended decision
+(accept or reject) whenever the evidence allows one, so the approver has something to approve,
+change or reject; only when it cannot reach a decision does it hand the case over as "escalate".
+Triggers 1 and 5 are checked by DisputeDesk itself, not by the analyst: the analyst does not need
+to weigh them in its decision.
 
 1. The disputed amount is $500.00 or more, or the merchant is in the high risk tier.
 2. The analyst's confidence in the decision is below 0.70.

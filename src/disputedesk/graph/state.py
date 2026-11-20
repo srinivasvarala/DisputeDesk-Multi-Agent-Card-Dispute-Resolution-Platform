@@ -66,6 +66,7 @@ class ResolutionDraft(Model):
     rationale: str = Field(min_length=1, max_length=4_000)
     letter: str = Field(min_length=1, max_length=8_000)
     version: int = Field(ge=1, description="Draft version saved through the cases server")
+    confidence: float | None = Field(default=None, ge=0, le=1, description="Analyst's own, 0 to 1")
 
 
 class Verdict(StrEnum):

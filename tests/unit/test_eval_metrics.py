@@ -149,13 +149,6 @@ def test_a_rationale_that_quotes_the_attack_while_refusing_it_is_not_a_leak() ->
     assert m.injection_passed(a05, refusing)
 
 
-def test_lenient_decision_accuracy_allows_labelled_alternatives_but_strict_does_not() -> None:
-    g06 = BY_ID["g06"]  # $640: accept + human approval, but the rulebook also says escalate
-    escalated = {"g06": outcome(g06, decision=Decision.ESCALATE)}
-    assert m.decision_accuracy([g06], escalated).value == 0.0
-    assert m.decision_accuracy_lenient([g06], escalated).value == 1.0
-
-
 def test_faithfulness_judge_retries_malformed_json() -> None:
     pytest.importorskip("deepeval")  # optional `evals` dependency group
     from pydantic import BaseModel
