@@ -10,10 +10,13 @@ The approver is the token's subject, never a field in the request body.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
 
 from disputedesk.api.auth import Authenticator
 from disputedesk.api.runtime import (
@@ -30,8 +33,13 @@ from disputedesk.api.schemas import (
     WorkflowState,
 )
 from disputedesk.config import Settings, get_settings
+from disputedesk.db.models import AuditEntry, AuditOutcome, CaseId
 from disputedesk.security.jwt import Principal, require_jwt_config
 from disputedesk.security.scopes import Scope
+
+logger = logging.getLogger(__name__)
+
+AUDIT_SERVER = "api"
 
 
 def _not_found(case_id: str) -> HTTPException:
@@ -45,7 +53,54 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     """
     settings = settings or get_settings()
     require_jwt_config(settings)
-    auth = Authenticator(settings)
+
+    def audit(
+        actor: str,
+        tool: str,
+        *,
+        case_id: str | None,
+        arguments: dict[str, Any],
+        outcome: AuditOutcome = AuditOutcome.OK,
+        error: str | None = None,
+    ) -> None:
+        rt().store.write_audit(
+            AuditEntry(
+                server=AUDIT_SERVER,
+                tool=tool,
+                actor=actor,
+                case_id=case_id,
+                arguments=arguments,
+                outcome=outcome,
+                error=error,
+                duration_ms=0,
+                created_at=datetime.now(UTC),
+            )
+        )
+
+    def audit_denied(
+        principal: Principal | None, scope: Scope, request: Request, code: int
+    ) -> None:
+        """401/403 are audited, but a broken audit log must not turn a denial into a success."""
+        route = request.scope.get("route")
+        template = getattr(route, "path", request.url.path)
+        case_id = request.path_params.get("case_id")
+        try:
+            audit(
+                principal.sub if principal else "anonymous",
+                f"{request.method} {template}",
+                case_id=case_id if isinstance(case_id, str) else None,
+                arguments={
+                    "scope": scope.value,
+                    "status": code,
+                    "role": principal.role.value if principal else None,
+                },
+                outcome=AuditOutcome.DENIED,
+                error="authentication required" if principal is None else "insufficient scope",
+            )
+        except Exception:
+            logger.exception("could not audit a denied request")
+
+    auth = Authenticator(settings, on_denied=audit_denied)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -68,7 +123,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     def start_dispute(
         body: StartDispute,
         background: BackgroundTasks,
-        _: Principal = Depends(auth.require(Scope.DISPUTES_START)),  # noqa: B008
+        principal: Principal = Depends(auth.require(Scope.DISPUTES_START)),  # noqa: B008
     ) -> Accepted:
         try:
             rt().claim_start(body.case_id)
@@ -78,6 +133,12 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             ) from None
         except WorkflowConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+        audit(
+            principal.sub,
+            "start_dispute",
+            case_id=body.case_id,
+            arguments={"role": principal.role.value},
+        )
         background.add_task(rt().run, body.case_id)
         return Accepted(case_id=body.case_id, workflow=WorkflowState.RUNNING)
 
@@ -104,8 +165,22 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             raise _not_found(case_id) from None
         except WorkflowConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+        audit(
+            principal.sub,
+            "approve_dispute",
+            case_id=case_id,
+            arguments={"role": principal.role.value, "approved": body.approved},
+        )
         background.add_task(rt().resume, case_id, body, principal.sub)
         return Accepted(case_id=case_id, workflow=WorkflowState.RUNNING)
+
+    @app.get("/audit")
+    def read_audit(
+        case_id: CaseId | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        _: Principal = Depends(auth.require(Scope.AUDIT_READ)),  # noqa: B008
+    ) -> list[AuditEntry]:
+        return rt().store.read_audit(case_id=case_id, limit=limit)
 
     return app
 

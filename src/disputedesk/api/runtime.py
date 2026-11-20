@@ -39,7 +39,13 @@ from disputedesk.graph.state import DisputeState
 from disputedesk.graph.wiring import Dependencies, build_nodes
 from disputedesk.llm import FakeClient, LLMClient, get_embedder, get_llm, get_reranker
 from disputedesk.mcp_servers.cases import server as cases_server
-from disputedesk.mcp_servers.common.store import AuditSink, CaseWriteStore, PostgresStore, ReadStore
+from disputedesk.mcp_servers.common.store import (
+    AuditReader,
+    AuditSink,
+    CaseWriteStore,
+    PostgresStore,
+    ReadStore,
+)
 from disputedesk.mcp_servers.merchant import server as merchant_server
 from disputedesk.mcp_servers.transactions import server as transactions_server
 from disputedesk.rag.retriever import Retriever
@@ -50,7 +56,7 @@ logger = logging.getLogger(__name__)
 Graph = CompiledStateGraph[DisputeState, None, DisputeState, DisputeState]
 
 
-class FullStore(ReadStore, CaseWriteStore, AuditSink, Protocol):
+class FullStore(ReadStore, CaseWriteStore, AuditSink, AuditReader, Protocol):
     """Everything `PostgresStore` and `InMemoryStore` both provide."""
 
 

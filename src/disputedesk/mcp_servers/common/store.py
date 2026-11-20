@@ -98,6 +98,12 @@ class AuditSink(Protocol):
     def write_audit(self, entry: AuditEntry) -> None: ...
 
 
+class AuditReader(Protocol):
+    def read_audit(self, *, case_id: str | None = None, limit: int = 50) -> list[AuditEntry]:
+        """Newest first."""
+        ...
+
+
 # --------------------------------------------------------------------------- in-memory
 
 
@@ -218,6 +224,11 @@ class InMemoryStore:
     def write_audit(self, entry: AuditEntry) -> None:
         with self._lock:
             self.audit.append(entry)
+
+    def read_audit(self, *, case_id: str | None = None, limit: int = 50) -> list[AuditEntry]:
+        with self._lock:
+            rows = [e for e in self.audit if case_id is None or e.case_id == case_id]
+        return rows[::-1][:limit]
 
 
 # --------------------------------------------------------------------------- Postgres
@@ -388,6 +399,20 @@ class PostgresStore:
     def write_audit(self, entry: AuditEntry) -> None:
         with self._lock, self._conn.cursor() as cur:
             _insert_audit(cur, entry)
+
+    def read_audit(self, *, case_id: str | None = None, limit: int = 50) -> list[AuditEntry]:
+        columns = "created_at, actor, server, tool, case_id, arguments, outcome, error, duration_ms"
+        if case_id is None:
+            rows = self._all(
+                f"SELECT {columns} FROM audit_log ORDER BY id DESC LIMIT %s",
+                (limit,),
+            )
+        else:
+            rows = self._all(
+                f"SELECT {columns} FROM audit_log WHERE case_id = %s ORDER BY id DESC LIMIT %s",
+                (case_id, limit),
+            )
+        return [AuditEntry.model_validate(r) for r in rows]
 
 
 def _insert_audit(cur: psycopg.Cursor[Any], entry: AuditEntry) -> None:

@@ -9,7 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from disputedesk.api.app import create_app
 from disputedesk.api.runtime import build_runtime
 from disputedesk.config import Settings
-from disputedesk.db.models import CaseStatus
+from disputedesk.db.models import AuditOutcome, CaseStatus
 from disputedesk.mcp_servers.common.store import InMemoryStore
 from disputedesk.security.scopes import Role
 from tests.conftest import make_settings
@@ -101,3 +101,67 @@ def test_approver_decision_is_recorded_under_the_token_subject(
 def test_app_refuses_to_start_without_a_jwt_secret(store: InMemoryStore) -> None:
     with pytest.raises(RuntimeError, match="JWT_SECRET"):
         create_app(settings=make_settings())
+
+
+# --- audit ------------------------------------------------------------------------------
+
+
+def test_denied_requests_are_audited_with_who_and_why(
+    client: TestClient, store: InMemoryStore, settings: Settings
+) -> None:
+    client.get("/disputes/case_0001")  # no token
+    client.headers.update(auth_headers(settings, sub="mallory", role=Role.ANALYST))
+    client.post("/disputes/case_0001/approve", json={"approved": True})  # wrong role
+
+    anonymous, wrong_role = store.audit[-2:]
+    assert (anonymous.actor, anonymous.outcome) == ("anonymous", AuditOutcome.DENIED)
+    assert anonymous.tool == "GET /disputes/{case_id}"
+    assert anonymous.case_id == "case_0001"
+    assert (wrong_role.actor, wrong_role.outcome) == ("mallory", AuditOutcome.DENIED)
+    assert wrong_role.arguments == {"scope": "disputes:approve", "status": 403, "role": "analyst"}
+
+
+def test_a_broken_audit_log_does_not_turn_a_denial_into_a_success(
+    client: TestClient, store: InMemoryStore
+) -> None:
+    def boom(entry: object) -> None:
+        raise RuntimeError("audit down")
+
+    store.write_audit = boom  # type: ignore[method-assign,assignment]
+    assert client.get("/disputes/case_0001").status_code == 401
+
+
+def test_start_and_approve_are_audited_under_the_caller(
+    client: TestClient, store: InMemoryStore, settings: Settings
+) -> None:
+    case_id = next(
+        c.case_id
+        for c in store.list_cases()
+        if c.status == CaseStatus.OPEN and needs_approval(c, store, settings)
+    )
+    client.headers.update(auth_headers(settings, sub="alice", role=Role.APPROVER))
+    client.post("/disputes", json={"case_id": case_id})
+    client.post(f"/disputes/{case_id}/approve", json={"approved": False})
+
+    api_rows = [e for e in store.audit if e.server == "api"]
+    assert [(e.actor, e.tool, e.case_id) for e in api_rows] == [
+        ("alice", "start_dispute", case_id),
+        ("alice", "approve_dispute", case_id),
+    ]
+    assert api_rows[1].arguments == {"role": "approver", "approved": False}
+
+
+def test_audit_endpoint_is_admin_only_and_filters_by_case(
+    client: TestClient, store: InMemoryStore, settings: Settings
+) -> None:
+    client.headers.update(auth_headers(settings, sub="alice", role=Role.APPROVER))
+    client.post("/disputes", json={"case_id": "case_0001"})
+    assert client.get("/audit").status_code == 403
+
+    client.headers.update(auth_headers(settings, sub="root", role=Role.ADMIN))
+    everything = client.get("/audit").json()
+    assert everything and everything[0]["created_at"] >= everything[-1]["created_at"]
+    one_case = client.get("/audit", params={"case_id": "case_0001"}).json()
+    assert one_case and {r["case_id"] for r in one_case} == {"case_0001"}
+    assert client.get("/audit", params={"limit": 0}).status_code == 422
+    assert client.get("/audit", params={"case_id": "nope"}).status_code == 422

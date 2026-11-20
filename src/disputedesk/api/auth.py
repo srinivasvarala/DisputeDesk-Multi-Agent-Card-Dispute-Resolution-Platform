@@ -15,8 +15,8 @@ from disputedesk.config import Settings
 from disputedesk.security.jwt import AuthError, Principal, verify_token
 from disputedesk.security.scopes import Scope
 
-# (principal or None, scope wanted, request path, status code)
-DeniedHook = Callable[[Principal | None, Scope, str, int], None]
+# (principal or None, scope wanted, request, status code)
+DeniedHook = Callable[[Principal | None, Scope, Request, int], None]
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -50,7 +50,7 @@ class Authenticator:
 
     def _deny(self, principal: Principal | None, scope: Scope, request: Request, code: int) -> None:
         if self._on_denied is not None:
-            self._on_denied(principal, scope, request.url.path, code)
+            self._on_denied(principal, scope, request, code)
         if code == status.HTTP_401_UNAUTHORIZED:
             raise HTTPException(
                 code, "authentication required", headers={"WWW-Authenticate": "Bearer"}

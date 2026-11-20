@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS case_drafts (
     PRIMARY KEY (case_id, version)
 );
 
--- One row per MCP tool call (success or failure). Append-only enforcement lands in M5.
+-- One row per MCP tool call, agent decision and API action (success or failure).
+-- Append-only: the triggers below reject UPDATE, DELETE and TRUNCATE for every role.
 CREATE TABLE IF NOT EXISTS audit_log (
     id          BIGSERIAL PRIMARY KEY,
     created_at  TIMESTAMPTZ NOT NULL,
@@ -81,3 +82,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
     duration_ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_log_case_idx ON audit_log (case_id, created_at);
+
+CREATE OR REPLACE FUNCTION audit_log_reject_change() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'audit_log is append-only: % is not allowed', TG_OP
+        USING ERRCODE = 'insufficient_privilege';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS audit_log_no_update_delete ON audit_log;
+CREATE TRIGGER audit_log_no_update_delete
+    BEFORE UPDATE OR DELETE ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION audit_log_reject_change();
+
+DROP TRIGGER IF EXISTS audit_log_no_truncate ON audit_log;
+CREATE TRIGGER audit_log_no_truncate
+    BEFORE TRUNCATE ON audit_log
+    FOR EACH STATEMENT EXECUTE FUNCTION audit_log_reject_change();
