@@ -15,7 +15,14 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     SYSTEM: frozenset({"get_case", "update_status"}),
     ROUTER: frozenset({"get_txn", "get_profile"}),
     EVIDENCE: frozenset(
-        {"get_txn", "get_history", "get_profile", "get_dispute_rate", "get_delivery_status"}
+        {
+            "get_txn",
+            "list_txns",
+            "get_history",
+            "get_profile",
+            "get_dispute_rate",
+            "get_delivery_status",
+        }
     ),
     POLICY: frozenset({"search_policies"}),  # the RAG retriever, not an MCP tool
     RESOLUTION: frozenset({"save_draft"}),

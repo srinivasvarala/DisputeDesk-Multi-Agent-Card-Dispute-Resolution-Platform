@@ -11,7 +11,9 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from disputedesk.agents.policy import PolicyAnswer
-from disputedesk.db.models import CaseStatus, Decision, ReasonCode, RiskTier
+from disputedesk.db.models import CaseStatus, Decision, Merchant, ReasonCode, RiskTier, Transaction
+from disputedesk.mcp_servers.merchant.server import DeliveryStatus, DisputeRate
+from disputedesk.mcp_servers.transactions.server import CustomerHistory
 
 MAX_REVISIONS = 2  # reviewer may send a draft back at most this many times
 
@@ -39,10 +41,24 @@ class Route(Model):
     rationale: str = Field(min_length=1, max_length=500)
 
 
-class Evidence(Model):
-    """What the Evidence agent gathered. Facts only; no decision."""
+class Leaning(StrEnum):
+    SUPPORTS_CUSTOMER = "supports_customer"
+    SUPPORTS_MERCHANT = "supports_merchant"
+    INCONCLUSIVE = "inconclusive"
 
-    summary: str = Field(min_length=1)
+
+class Evidence(Model):
+    """What the Evidence agent gathered. The facts come straight from tool results; only
+    `summary` and `leaning` are the model's reading of them."""
+
+    transaction: Transaction
+    merchant: Merchant
+    customer_history: CustomerHistory
+    merchant_dispute_rate: DisputeRate
+    delivery: DeliveryStatus | None = None
+    possible_duplicates: list[Transaction] = Field(default_factory=list)
+    summary: str = Field(min_length=1, max_length=1_500)
+    leaning: Leaning
 
 
 class ResolutionDraft(Model):
