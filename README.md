@@ -24,6 +24,28 @@ uv run pytest -q
 `LLM_PROVIDER=fake` (the default in `.env.example`) needs no API key. Set `LLM_PROVIDER=anthropic` and
 `ANTHROPIC_API_KEY` to use Claude, or `LLM_PROVIDER=ollama` for a local model.
 
+## Evals
+
+`uv run python evals/run_evals.py --thresholds evals/thresholds.yml` runs 40 synthetic disputes (10
+adversarial) through the real graph and exits non-zero if any threshold fails. Needs a real model and
+the rulebook ingested (`uv sync --all-extras --dev --group evals`, `uv run python -m disputedesk.rag.ingest`).
+Latest baseline (Haiku 5.5, 2026-11-20). The gate is red: the evals found real defects, listed in
+[PROGRESS.md](PROGRESS.md#m7-evals--the-harness-is-done-the-gate-is-red-on-purpose) and fixed in M7.1.
+
+| Metric | Value | Threshold |
+|---|---|---|
+| Router accuracy | 1.000 | ≥ 0.90 |
+| Decision accuracy | 0.133 | ≥ 0.80 |
+| Human-approval routing accuracy | 1.000 | ≥ 1.00 |
+| Citation hit rate | 0.133 | ≥ 0.70 |
+| Citation faithfulness (DeepEval) | 0.952 | ≥ 0.85 |
+| Letter quality (LLM judge, 1-5) | 3.23 | ≥ 4.00 |
+| Guardrail catch rate | 0.333 | ≥ 0.80 |
+| Guardrail false-positive rate | 0.033 | ≤ 0.05 |
+| Injection pass rate | 0.400 | ≥ 1.00 |
+
+Red-team: `npx promptfoo@0.126.0 eval -c evals/promptfoo/redteam.yaml --no-cache` (4 of 18 pass; see PROGRESS.md).
+
 ## Development
 
 ```bash
