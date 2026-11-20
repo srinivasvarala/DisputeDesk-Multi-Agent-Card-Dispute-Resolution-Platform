@@ -224,16 +224,15 @@ def test_write_audit_persists_row(pg: PostgresStore, conn: psycopg.Connection) -
 
 
 @pytest.mark.parametrize(
-    "statement",
+    ("tag", "statement"),
     [
-        "UPDATE audit_log SET actor = 'someone-else' WHERE actor = %s",
-        "DELETE FROM audit_log WHERE actor = %s",
+        ("append-only-update", "UPDATE audit_log SET actor = 'someone-else' WHERE actor = %s"),
+        ("append-only-delete", "DELETE FROM audit_log WHERE actor = %s"),
     ],
 )
 def test_audit_log_rejects_update_and_delete(
-    pg: PostgresStore, conn: psycopg.Connection, statement: str
+    pg: PostgresStore, conn: psycopg.Connection, tag: str, statement: str
 ) -> None:
-    tag = f"append-only-{abs(hash(statement))}"
     pg.write_audit(_audit(tag))
     with pytest.raises(psycopg.errors.InsufficientPrivilege, match="append-only"):
         conn.execute(statement, (tag,))  # type: ignore[arg-type]
@@ -241,18 +240,19 @@ def test_audit_log_rejects_update_and_delete(
 
 
 def test_audit_log_rejects_truncate(pg: PostgresStore, conn: psycopg.Connection) -> None:
-    pg.write_audit(_audit("truncate-probe"))
+    tag = "truncate-probe"
+    pg.write_audit(_audit(tag))
     with pytest.raises(psycopg.errors.InsufficientPrivilege, match="append-only"):
         conn.execute("TRUNCATE audit_log")
-    assert _audit_count(conn, "truncate-probe") >= 1
+    assert _audit_count(conn, tag) == 1
 
 
-def test_read_audit_matches_in_memory_order_and_filter(
+def test_read_audit_returns_newest_first_and_filters_by_case(
     pg: PostgresStore, conn: psycopg.Connection
 ) -> None:
     tag = "read-audit-probe"
     for tool in ("a", "b", "c"):
         pg.write_audit(_audit(tag, tool=tool, case_id="case_0003"))
     rows = [r for r in pg.read_audit(case_id="case_0003", limit=50) if r.actor == tag]
-    assert [r.tool for r in rows][:3] == ["c", "b", "a"]  # newest first
+    assert [r.tool for r in rows] == ["c", "b", "a"]  # newest first
     assert len(pg.read_audit(limit=2)) == 2

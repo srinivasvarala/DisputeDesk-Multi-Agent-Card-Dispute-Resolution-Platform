@@ -1,13 +1,19 @@
 """Integration fixtures: a real Postgres (docker compose locally, a service container in CI).
 
-These tests reseed the app tables (`--reset` semantics; audit_log is kept). Locally they are
-skipped if Postgres is not reachable; in CI (CI env var set) they fail instead.
+The tests run in a throwaway database created on that server for the test session and dropped at
+the end. This matters because `audit_log` is append-only: rows the tests write could never be
+cleaned up from the dev database. The role in DATABASE_URL therefore needs CREATEDB (the
+`postgres` role in docker compose and in CI has it). Within the session the tests reseed the
+app tables (`--reset` semantics; audit_log is kept). Locally they are skipped if Postgres is not
+reachable; in CI (CI env var set) they fail instead.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Iterator
+from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
@@ -20,15 +26,22 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture(scope="session")
-def database_url() -> str:
-    url = get_settings().database_url
+def database_url() -> Iterator[str]:
+    """URL of a throwaway database, created for this session and dropped afterwards."""
+    server_url = get_settings().database_url
     try:
-        psycopg.connect(url, connect_timeout=3).close()
+        admin = psycopg.connect(server_url, connect_timeout=3, autocommit=True)
     except psycopg.OperationalError as exc:
         if os.environ.get("CI"):
             raise
         pytest.skip(f"Postgres not reachable ({exc.__class__.__name__}); run docker compose up -d")
-    return url
+    name = f"disputedesk_test_{uuid.uuid4().hex[:12]}"
+    with admin:
+        admin.execute(f'CREATE DATABASE "{name}"')  # type: ignore[arg-type]
+        try:
+            yield urlunsplit(urlsplit(server_url)._replace(path=f"/{name}"))
+        finally:
+            admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')  # type: ignore[arg-type]
 
 
 @pytest.fixture

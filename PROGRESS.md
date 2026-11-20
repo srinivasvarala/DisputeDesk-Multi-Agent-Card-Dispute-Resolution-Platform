@@ -324,4 +324,5 @@ Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 - **Verifier is required:** `AuditedMCPServer` and `build_server` take `verifier` with no default; `NO_AUTH` is the explicit opt-out (standalone demo servers, single-server unit tests).
 - **Actor namespace:** API audit rows use `user:<sub>`.
 - **Reads:** `GET /audit` is audited (fail-closed, written before the data is returned). `GET /disputes/{id}` is deliberately not audited; the exception is documented in CLAUDE.md.
-- Still open: integration tests add permanent rows to the dev `audit_log`.
+- **Test rows:** integration tests now run in a throwaway database (created for the session, dropped at the end), so they no longer add permanent rows to the dev `audit_log`. The audit tests use fixed tags and exact counts. The DB role needs `CREATEDB` (true for `postgres` in compose and CI). The `models` retrieval test now re-ingests into the fresh database each run (about 2 minutes with real models).
+- Nothing from the M5 review is open.
