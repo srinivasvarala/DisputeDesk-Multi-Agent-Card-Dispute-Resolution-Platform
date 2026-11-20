@@ -55,15 +55,24 @@ services:
       retries: 12
       start_period: 30s
 
-  # OpenTelemetry collector: receives OTLP from the app; debug exporter for now (M6 wires backends).
+  # Trace UI. In-memory storage: traces are lost on restart, fine for a demo.
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686"]   # UI
+
+  # OpenTelemetry collector: receives OTLP from the app; traces -> Jaeger, metrics -> :8889.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.120.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    depends_on: [jaeger]
     volumes:
       - ./infra/otel/collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics endpoint (curl http://localhost:8889/metrics)
       - "13133:13133" # health_check extension (curl http://localhost:13133/)
     # The image is distroless (no shell/wget), so the in-container check validates the
     # config with the collector binary itself; the live endpoint is on :13133 from the host.

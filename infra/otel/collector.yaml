@@ -14,9 +14,16 @@ processors:
   batch: {}
 
 exporters:
-  # M0: print a summary of received telemetry. M6 adds real backends.
   debug:
     verbosity: basic
+  # Traces: Jaeger takes OTLP directly (UI on http://localhost:16686).
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  # Metrics: scrape http://localhost:8889/metrics (names use _ instead of .).
+  prometheus:
+    endpoint: 0.0.0.0:8889
 
 service:
   extensions: [health_check]
@@ -24,8 +31,8 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [otlp/jaeger, debug]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [prometheus, debug]
