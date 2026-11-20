@@ -260,3 +260,14 @@ Retrieval results on the 25-question set (k=5):
 - `check_input`/`check_output` are not wired into intake/finalize. Required-evidence check and guardrail metrics (blueprint M4) not built. Metrics land with M6.
 - Heuristic jailbreak patterns are a baseline. Red-teaming is M7; untrusted-content wrapping is M5.
 
+### M4 code-review follow-ups (fixed)
+- **Refund cap fails closed.** All refund keys are checked and the maximum is used. Numeric strings, floats (rounded up) and `Decimal` are read. Negative, unreadable or boolean values, and unknown amount keys (`amount`, `refund_amount`: unit unknown), go to `require_approval`.
+- **Grounding last-4:** a last-4 is grounded if it is a standalone 4-digit token or the final four digits of a longer number. Leading chunks of a long number no longer ground anything.
+- **Heuristics:** the pre-approval pattern now needs an imperative or system-attributed form ("this refund is pre-approved", "pre-approved by the system"), so a bank's "pre-approved limit" passes. The on-topic regex has a leading word boundary ("discard" no longer matches "card") and covers "billed".
+- **`LLMJudge`** runs in a worker thread (`asyncio.to_thread`), not on the event loop, and logs the exception before failing closed.
+- **Audit:** new `approval_required` outcome. Tool-call audit rows record argument names and the refund amount, never values (letters or evidence may hold PII).
+
+### Still open from the review
+- `asyncio.run` per NeMo check against a cached `Guardrails` instance: no failure seen (repeated checks pass in tests), but not stress-tested across threads. Revisit if NeMo gets a loop-bound LLM client.
+- `RedactingFilter` loads spaCy on first log line and could re-enter if Presidio logs. Nothing attaches it yet; guard it when it is wired in (M5/M6).
+

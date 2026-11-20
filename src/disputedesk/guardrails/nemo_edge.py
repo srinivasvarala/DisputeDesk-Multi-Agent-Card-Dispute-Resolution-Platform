@@ -62,12 +62,15 @@ class NemoEdge:
     # --- actions (NeMo calls these from the Colang flows) ---
 
     async def _detect_jailbreak(self, text: str) -> bool:
-        return looks_like_jailbreak(text) or (
-            self._judge is not None and self._judge.is_jailbreak(text)
-        )
+        if looks_like_jailbreak(text):
+            return True
+        # The judge makes a blocking LLM call: keep it off the event loop.
+        return self._judge is not None and await asyncio.to_thread(self._judge.is_jailbreak, text)
 
     async def _detect_off_topic(self, text: str) -> bool:
-        return looks_off_topic(text) or (self._judge is not None and self._judge.is_off_topic(text))
+        if looks_off_topic(text):
+            return True
+        return self._judge is not None and await asyncio.to_thread(self._judge.is_off_topic, text)
 
     async def _detect_pii(self, text: str) -> bool:
         return bool(self._redactor.find(text))

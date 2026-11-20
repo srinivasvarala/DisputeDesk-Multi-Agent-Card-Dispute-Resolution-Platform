@@ -6,6 +6,7 @@ Plain Python on purpose. Limits and allowlists are never decided by an LLM or by
 from __future__ import annotations
 
 from collections.abc import Mapping
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Any
 
@@ -13,8 +14,7 @@ from pydantic import BaseModel
 
 from disputedesk.agents.allowlists import ALLOWLISTS
 
-# Tool arguments that carry a refund amount in cents. An accepted dispute refunds money, so
-# any tool call that states an amount is checked against the cap.
+# Arguments known to hold a refund amount in cents.
 REFUND_ARGUMENTS = ("refund_cents", "amount_cents")
 
 
@@ -40,12 +40,32 @@ def refund_needs_approval(refund_cents: int, cap_cents: int) -> bool:
     return refund_cents >= cap_cents
 
 
+def _to_cents(value: object) -> int:
+    """Read a cents value (int, float, Decimal or numeric string) or raise ValueError."""
+    if isinstance(value, bool):
+        raise ValueError("boolean is not an amount")
+    try:
+        number = Decimal(str(value).strip())
+    except InvalidOperation as exc:
+        raise ValueError(f"not a number: {value!r}") from exc
+    if not number.is_finite() or number < 0:
+        raise ValueError(f"not a valid amount: {value!r}")
+    return int(number.to_integral_value(rounding=ROUND_CEILING))  # round up: never under-count
+
+
 def refund_amount(arguments: Mapping[str, Any]) -> int | None:
-    for key in REFUND_ARGUMENTS:
-        value = arguments.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None
+    """The largest refund amount in the arguments, or None if there is none.
+
+    Raises ValueError when an amount is present but unreadable (wrong type, negative) or sits
+    in a key whose unit we do not know (e.g. `amount`): the caller must fail closed.
+    """
+    amounts: list[int] = []
+    for key, value in arguments.items():
+        if key in REFUND_ARGUMENTS:
+            amounts.append(_to_cents(value))
+        elif "refund" in key.lower() or "amount" in key.lower():
+            raise ValueError(f"unrecognised amount argument {key!r}: unit unknown")
+    return max(amounts) if amounts else None
 
 
 def evaluate_tool_call(
@@ -59,7 +79,10 @@ def evaluate_tool_call(
     """Allowlist first (deny wins), then the refund cap."""
     if not tool_is_allowed(agent, tool, allowed):
         return RuleResult(action=RuleAction.DENY, reasons=[f"{agent} may not call {tool}"])
-    amount = refund_amount(arguments)
+    try:
+        amount = refund_amount(arguments)
+    except ValueError as exc:  # cannot tell how much money is involved: a human decides
+        return RuleResult(action=RuleAction.REQUIRE_APPROVAL, reasons=[str(exc)])
     if amount is not None and refund_needs_approval(amount, cap_cents):
         return RuleResult(
             action=RuleAction.REQUIRE_APPROVAL,

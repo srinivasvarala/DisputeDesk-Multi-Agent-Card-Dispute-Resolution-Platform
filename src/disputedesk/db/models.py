@@ -158,6 +158,7 @@ class AuditOutcome(StrEnum):
     CONFLICT = "conflict"
     ERROR = "error"
     CANCELLED = "cancelled"
+    APPROVAL_REQUIRED = "approval_required"  # a guardrail sent the action to a human
 
 
 class AuditEntry(Record):

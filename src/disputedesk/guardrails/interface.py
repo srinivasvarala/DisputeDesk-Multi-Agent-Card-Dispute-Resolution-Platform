@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from disputedesk.config import get_settings
 from disputedesk.db.models import AuditEntry, AuditOutcome
 from disputedesk.guardrails.nemo_edge import NemoEdge
-from disputedesk.guardrails.policy_rules import RuleAction, evaluate_tool_call
+from disputedesk.guardrails.policy_rules import RuleAction, evaluate_tool_call, refund_amount
 from disputedesk.guardrails.redaction import get_redactor
 from disputedesk.guardrails.telemetry import emit_guardrail_event
 from disputedesk.mcp_servers.common.store import AuditSink
@@ -56,6 +56,15 @@ def _edge() -> NemoEdge:
     return NemoEdge(get_redactor())
 
 
+_OUTCOME = {
+    Action.ALLOW: AuditOutcome.OK,
+    Action.REDACT: AuditOutcome.OK,
+    Action.BLOCK: AuditOutcome.INVALID_INPUT,
+    Action.DENY: AuditOutcome.INVALID_INPUT,
+    Action.REQUIRE_APPROVAL: AuditOutcome.APPROVAL_REQUIRED,
+}
+
+
 def _record(
     verdict: Verdict,
     *,
@@ -84,7 +93,7 @@ def _record(
                 actor=agent,
                 case_id=case_id,
                 arguments={"rail": rail, "action": verdict.action, **(detail or {})},
-                outcome=AuditOutcome.OK if verdict.allowed else AuditOutcome.INVALID_INPUT,
+                outcome=_OUTCOME[verdict.action],
                 error="; ".join(verdict.reasons) or None,
                 duration_ms=0,
                 created_at=datetime.now(UTC),
@@ -164,6 +173,13 @@ def check_output(
     )
 
 
+def _amount(arguments: Mapping[str, Any]) -> int | None:
+    try:
+        return refund_amount(arguments)
+    except ValueError:
+        return None
+
+
 def check_tool_call(
     agent: str,
     tool: str,
@@ -196,6 +212,11 @@ def check_tool_call(
         agent=agent,
         case_id=case_id,
         audit=audit,
-        detail={"tool": tool},
+        # Argument names and the refund amount only: values (letters, evidence) may hold PII.
+        detail={
+            "tool": tool,
+            "argument_names": sorted(arguments),
+            "refund_cents": _amount(arguments),
+        },
         audit_allow=False,  # allowed calls are audited by the MCP servers themselves
     )
