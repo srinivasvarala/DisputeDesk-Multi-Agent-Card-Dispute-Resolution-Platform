@@ -7,6 +7,7 @@ license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "anthropic>=2.11",        # default LLM provider (only imported in llm.py)
+    "fastapi>=0.165.0",
     "fastembed>=0.9.1",        # local ONNX embeddings + cross-encoder reranker (only imported in llm.py)
     "httpx2>=2.16",           # Ollama REST calls; same client the anthropic SDK uses
     "langgraph>=1.2.24",
@@ -16,10 +17,12 @@ dependencies = [
     "psycopg[binary]>=3.3",   # Postgres driver for the stores and seed script
     "pydantic>=2.9",          # schemas for all boundary data
     "pydantic-settings>=2.6", # env-var based config
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "mypy>=1.13",
     "pre-commit>=4.0",
     "pytest>=8.3",
