@@ -35,7 +35,8 @@ DEFAULT_MAX_CHARS = 1500
 SECTION_SEPARATOR = " > "
 INTRO_SECTION = "Introduction"
 
-_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+# A closing run of #s only counts when preceded by whitespace (CommonMark): "C#" keeps its #.
+_HEADING = re.compile(r"^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _TABLE_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,40}$")
 # The disclaimer banner repeated at the top of every policy doc carries no retrievable content.

@@ -31,8 +31,7 @@ _EXCERPT_1 = re.compile(r'<excerpt id="1" [^>]*>\n(.*?)\n</excerpt>', re.DOTALL)
 def quote_first_excerpt(system: str, messages: Sequence[Message]) -> str:
     match = _EXCERPT_1.search(messages[0].content)
     assert match is not None
-    first_line = match.group(1).splitlines()[0]
-    citation = {"excerpt_id": 1, "quote": first_line[:200]}
+    citation = {"excerpt_id": 1, "quote": match.group(1)[:200]}
     return json.dumps({"summary": "See the cited rule.", "citations": [citation]})
 
 
@@ -58,7 +57,8 @@ def test_every_answer_has_a_citation_and_an_audit_row(
             answer = agent.answer(case.question, case_id="CASE-0001")
             assert answer.citations, case.id
             assert all(c.source.endswith(".md") and c.section for c in answer.citations)
-        assert _audit_rows(audit_conn) - before == len(cases)
+        # one row for the search and one for the decision, per question
+        assert _audit_rows(audit_conn) - before == 2 * len(cases)
 
 
 def _audit_rows(conn: psycopg.Connection) -> int:

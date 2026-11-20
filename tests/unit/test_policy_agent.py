@@ -89,7 +89,20 @@ def test_citation_source_and_section_come_from_the_chunk() -> None:
 
 def test_quote_match_ignores_case_whitespace_and_emphasis() -> None:
     reply = _reply("x", (1, "the refund  amount is $500.00 OR LESS"))
-    assert parse_answer(reply, CHUNKS).citations[0].quote == "the refund  amount is $500.00 OR LESS"
+    assert parse_answer(reply, CHUNKS).citations[0].source.startswith("11-")
+
+
+def test_stored_quote_is_the_policys_own_text() -> None:
+    reply = _reply("x", (1, "THE REFUND amount IS $500.00 or less"))
+    (citation,) = parse_answer(reply, CHUNKS).citations
+    assert citation.quote == "the refund amount is **$500.00 or less"
+    assert citation.quote in CHUNKS[0].content  # literally in the document
+
+
+@pytest.mark.parametrize("quote", ["**", "_", "``", "   ", "$500.00", "automated"])
+def test_quotes_too_short_to_prove_anything_are_rejected(quote: str) -> None:
+    with pytest.raises(ValueError, match="at least 2 words"):
+        parse_answer(_reply("x", (1, quote)), CHUNKS)
 
 
 def test_json_inside_code_fence_is_accepted() -> None:
@@ -153,8 +166,17 @@ def test_answer_has_citations_and_writes_one_audit_row() -> None:
     agent, _, audit = _agent([_reply("Up to $500.", (1, "$500.00 or less"))])
     answer = agent.answer("What is the automated refund limit?", case_id="CASE-0001")
     assert answer.citations
-    (entry,) = audit.entries
+    entry, decision = audit.entries
     assert (entry.actor, entry.server, entry.tool) == (ACTOR, "rag", "search_policies")
+    assert (decision.actor, decision.tool, decision.outcome) == (
+        ACTOR,
+        "answer_policy_question",
+        AuditOutcome.OK,
+    )
+    assert decision.case_id == "CASE-0001"
+    assert decision.arguments["citations"] == [
+        "11-approval-thresholds-and-escalation.md § Automated decision limit"
+    ]
     assert entry.case_id == "CASE-0001"
     assert entry.outcome == AuditOutcome.OK
     assert entry.arguments == {"query": "What is the automated refund limit?", "k": 5}
@@ -182,7 +204,10 @@ def test_no_matching_excerpts_fails_without_calling_the_llm() -> None:
     with pytest.raises(PolicyAgentError, match="no policy excerpts"):
         agent.answer("unrelated")
     assert llm.calls == []
-    assert audit.entries[0].outcome == AuditOutcome.OK
+    search, decision = audit.entries
+    assert search.outcome == AuditOutcome.OK
+    assert decision.outcome == AuditOutcome.ERROR
+    assert "no policy excerpts" in (decision.error or "")
 
 
 @pytest.mark.parametrize(
@@ -200,6 +225,27 @@ def test_search_failures_are_audited(error: Exception, outcome: AuditOutcome) ->
     (entry,) = audit.entries
     assert entry.outcome == outcome
     assert entry.error
+
+
+def test_rejected_answer_is_audited_as_an_error_decision() -> None:
+    agent, _, audit = _agent([_reply("x", (1, "invented words")), "still not json"])
+    with pytest.raises(PolicyAgentError):
+        agent.answer("limit?")
+    assert [e.outcome for e in audit.entries] == [AuditOutcome.OK, AuditOutcome.ERROR]
+    assert "after 2 attempts" in (audit.entries[1].error or "")
+
+
+class BrokenAudit:
+    def write_audit(self, entry: AuditEntry) -> None:
+        raise ConnectionError("database down")
+
+
+def test_audit_failure_refuses_the_call_instead_of_masking_it() -> None:
+    llm = FakeClient(responder=lambda s, m: _reply("x", (1, "$500.00 or less")))
+    agent = PolicyAgent(StubSearch(CHUNKS), llm, BrokenAudit(), clock=lambda: NOW)
+    with pytest.raises(PolicyAgentError, match="audit log unavailable"):
+        agent.answer("limit?")
+    assert llm.calls == []  # failed closed on the search audit, before any LLM call
 
 
 def test_llm_errors_are_wrapped() -> None:

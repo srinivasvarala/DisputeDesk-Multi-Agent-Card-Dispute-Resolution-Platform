@@ -37,8 +37,9 @@ class Settings(BaseSettings):
     # model_cache_dir. "fake" providers are deterministic and offline, for unit tests.
     embedding_provider: EmbeddingProvider = "fastembed"
     embedding_model: str = "BAAI/bge-base-en-v1.5"
-    # bge models retrieve better with this instruction on the query side only.
-    embedding_query_prefix: str = "Represent this sentence for searching relevant passages: "
+    # Instruction prepended to queries (never documents). None = the model default: the bge
+    # instruction for BAAI/bge-* models, nothing for others. Set "" to force no prefix.
+    embedding_query_prefix: str | None = None
     reranker_provider: RerankerProvider = "fastembed"  # "none" disables reranking
     # Best of 4 fastembed rerankers on evals/datasets/retrieval.jsonl (see PROGRESS.md, M2).
     reranker_model: str = "BAAI/bge-reranker-v2-m3-int8"

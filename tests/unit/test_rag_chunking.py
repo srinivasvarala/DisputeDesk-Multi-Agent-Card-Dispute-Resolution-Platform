@@ -54,6 +54,15 @@ def test_disclaimer_banner_is_dropped() -> None:
     assert not any("Fictional policy" in c.content for c in chunks)
 
 
+def test_closing_hashes_are_stripped_only_after_whitespace() -> None:
+    text = "# T\n\n## Tier C#\n\na\n\n## Closed ##\n\nb\n\n### Level 2 ###\n\nc\n"
+    assert [c.section for c in chunk_markdown(text, "t.md")] == [
+        "Tier C#",
+        "Closed",
+        "Closed > Level 2",
+    ]
+
+
 def test_other_blockquotes_are_kept() -> None:
     text = "# T\n\n## Formula\n\n> refund = disputed amount - refunds already made\n"
     (chunk,) = chunk_markdown(text, "t.md")

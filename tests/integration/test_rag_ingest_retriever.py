@@ -193,6 +193,14 @@ def test_keyword_search_tolerates_tsquery_syntax(retriever: Retriever) -> None:
     assert results
 
 
+@pytest.mark.parametrize(
+    "query",
+    [r"Does C:\files\receipt.pdf count as evidence?", r"a\b refund \\ x", "it's a 'refund'"],
+)
+def test_backslashes_and_quotes_in_queries_are_harmless(retriever: Retriever, query: str) -> None:
+    assert retriever.search(query, mode="keyword")
+
+
 @pytest.mark.parametrize("query", ["", "   ", "x" * 1001])
 def test_invalid_queries_are_rejected(retriever: Retriever, query: str) -> None:
     with pytest.raises(ValueError):

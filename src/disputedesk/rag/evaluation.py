@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -152,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     cases = load_cases(args.dataset)
     with connect() as conn:
         ingest(conn, embedder, load_corpus(Path(settings.policies_dir)))  # no-op if current
+        if (args.rerank_top_n or args.reranker_model) and settings.reranker_provider == "none":
+            print("RERANKER_PROVIDER=none: reranker comparisons need a reranker", file=sys.stderr)
+            return 1
         if args.rerank_top_n:
             rerank = next(c for c in CONFIGS if c.rerank)
             reranker = get_reranker(settings)
@@ -160,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 retriever = Retriever(conn, embedder, reranker, rerank_top_n=top_n)
                 started = time.perf_counter()
                 report = evaluate(retriever, cases, rerank, k=args.k)
-                per_query = (time.perf_counter() - started) / len(cases)
+                per_query = (time.perf_counter() - started) / max(len(cases), 1)
                 name = f"rerank top {top_n} ({per_query:.1f}s/query)"
                 reports.append(report.model_copy(update={"config": name}))
         elif args.reranker_model:
@@ -177,8 +181,12 @@ def main(argv: list[str] | None = None) -> int:
                 report = evaluate(Retriever(conn, embedder, reranker), cases, rerank, k=args.k)
                 reports.append(report.model_copy(update={"config": f"rerank: {model}"}))
         else:
-            retriever = Retriever(conn, embedder, get_reranker(settings))
-            reports = [evaluate(retriever, cases, c, k=args.k) for c in CONFIGS]
+            reranker = get_reranker(settings)
+            retriever = Retriever(conn, embedder, reranker)
+            # Without a reranker, "hybrid + rerank" would just repeat plain hybrid under a
+            # misleading label, so leave it out.
+            configs = [c for c in CONFIGS if reranker is not None or not c.rerank]
+            reports = [evaluate(retriever, cases, c, k=args.k) for c in configs]
     print(format_reports(reports))
     if args.misses:
         for report in reports:

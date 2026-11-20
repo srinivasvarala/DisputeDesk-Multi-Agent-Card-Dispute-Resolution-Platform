@@ -258,6 +258,16 @@ class Reranker(Protocol):
         ...
 
 
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+
+def query_prefix(settings: Settings) -> str:
+    """Query-side instruction for the configured embedding model."""
+    if settings.embedding_query_prefix is not None:
+        return settings.embedding_query_prefix
+    return BGE_QUERY_PREFIX if settings.embedding_model.startswith("BAAI/bge-") else ""
+
+
 class FastEmbedEmbedder:
     provider = "fastembed"
 
@@ -269,7 +279,7 @@ class FastEmbedEmbedder:
         )
         self.model = settings.embedding_model
         self.dim: int = self._model.embedding_size
-        self._query_prefix = settings.embedding_query_prefix
+        self._query_prefix = query_prefix(settings)
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         return [cast(list[float], v.tolist()) for v in self._model.embed(list(texts))]

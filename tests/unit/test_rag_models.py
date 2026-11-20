@@ -2,7 +2,14 @@ import math
 
 import pytest
 
-from disputedesk.llm import FakeEmbedder, FakeReranker, get_embedder, get_reranker
+from disputedesk.llm import (
+    BGE_QUERY_PREFIX,
+    FakeEmbedder,
+    FakeReranker,
+    get_embedder,
+    get_reranker,
+    query_prefix,
+)
 from disputedesk.rag.retriever import RetrievedChunk, reciprocal_rank_fusion
 from tests.conftest import make_settings
 
@@ -77,3 +84,15 @@ def test_citation_format() -> None:
         rrf_score=0.1,
     )
     assert chunk.citation == "08-time-limits.md § Merchant deadlines"
+
+
+def test_query_prefix_follows_the_model() -> None:
+    assert query_prefix(make_settings()) == BGE_QUERY_PREFIX  # default model is bge
+    assert query_prefix(make_settings(embedding_model="BAAI/bge-small-en-v1.5")) == BGE_QUERY_PREFIX
+    other = make_settings(embedding_model="sentence-transformers/all-MiniLM-L6-v2")
+    assert query_prefix(other) == ""  # non-bge models get no bge instruction
+
+
+def test_query_prefix_can_be_overridden() -> None:
+    assert query_prefix(make_settings(embedding_query_prefix="query: ")) == "query: "
+    assert query_prefix(make_settings(embedding_query_prefix="")) == ""

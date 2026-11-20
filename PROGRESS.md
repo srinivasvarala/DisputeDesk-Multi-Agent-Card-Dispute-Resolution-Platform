@@ -115,7 +115,7 @@ Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 - Idempotent ingest: keyed by `(source, chunk_index)` with a content hash and model name; only new or changed chunks are embedded, removed chunks deleted, all in one transaction (including `--rebuild`). Refuses an empty corpus and a vector-size change without `--rebuild`. CLI: `python -m disputedesk.rag.ingest`.
 - `rag/retriever.py`: vector top 20 + keyword top 20 (stemmed terms OR-ed into a tsquery) -> reciprocal rank fusion (k=60) -> cross-encoder rerank of the top 10 fused candidates. Results carry `source`, `section`, `citation` and per-list ranks. Fails loudly on a missing, empty or wrong-model index. CLI: `python -m disputedesk.rag.retriever "question"`.
 - `rag/evaluation.py` + `evals/datasets/retrieval.jsonl`: 25 labelled questions (10 direct, 15 harder: near-miss sections, cross-document, numeric edge cases, paraphrased vocabulary). Reports hit@k and MRR per configuration; `--reranker-model` and `--rerank-top-n` compare models and pool sizes.
-- `agents/policy.py`: `PolicyAgent.answer() -> PolicyAnswer{summary, citations[]}`. The retriever is its only tool. Citations reference shown excerpts by id (source/section filled from the chunk, never the model) and quotes must appear verbatim; no valid citation -> one retry -> `PolicyAgentError`. The question is untrusted: escaped, in the user message, never in the system prompt. Each retrieval writes one `audit_log` row (`policy_agent` / `rag` / `search_policies`), including failures.
+- `agents/policy.py`: `PolicyAgent.answer() -> PolicyAnswer{summary, citations[]}`. The retriever is its only tool. Citations reference shown excerpts by id (source/section filled from the chunk, never the model); quotes need at least 2 words, must appear in the excerpt (ignoring case, whitespace, markdown emphasis), and the stored quote is the excerpt's own text; no valid citation -> one retry -> `PolicyAgentError`. The question is untrusted: escaped, in the user message, never in the system prompt. Two `audit_log` rows per answer (`policy_agent` / `rag`): `search_policies` and `answer_policy_question` (the decision, or why there was none), including failures. Audit is fail-closed: if a row cannot be written the call is refused.
 - CI runs ingest and caches model weights; the retrieval-quality test writes its table to the job summary.
 
 ### Acceptance
@@ -124,7 +124,7 @@ Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 | 10-question retrieval set reaches hit@5 >= 0.8 | ✅ Grown to 25 harder questions; hit@5 **0.92** (hybrid + rerank), gated in `tests/integration/test_retrieval_quality.py` |
 | Every answer carries at least one citation | ✅ Enforced in code (`PolicyAnswer.citations` min 1, verbatim-quote check); integration test over all 25 questions |
 | Ingestion is idempotent | ✅ Second run: 0 embedded, 92 unchanged (1.3s); tests cover change/add/remove, model change, dimension change, rollback |
-| Lint, types, tests | ✅ ruff, mypy; 160 unit, 44 integration |
+| Lint, types, tests | ✅ ruff, mypy; 172 unit, 47 integration |
 | CI green | ✅ [Run 44652878826](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44652878826) passed on `9cd6ac2` in ~4 min, including ingest, model download + cache, and the retrieval-quality gate |
 
 Retrieval results on the 25-question set (k=5):
@@ -156,3 +156,4 @@ Retrieval results on the 25-question set (k=5):
 - Reranking is 2.5s/query on a laptop CPU; first run downloads ~0.8 GB of weights.
 - `PolicyAnswer` quality with a real LLM is not yet evaluated (M7). Tests use a deterministic stand-in.
 - Audit rows store the raw question (synthetic data only); Presidio redaction is M4.
+- Code review (`/code-review since 27c0608`, 7 findings): fixed an empty/one-word quote passing as a citation, stored quotes not being the policy's literal text, audit failures masking the search result (now fail-closed) plus no audit row for the decision, the eval labelling plain hybrid as "rerank" when no reranker is configured, the bge query prefix applying to non-bge models, and `Tier C#`-style headings losing the `#`. Not reproducible: backslashes breaking `to_tsquery` (regression test added). `Priority #` -> `Priority` is correct CommonMark and was left alone.
