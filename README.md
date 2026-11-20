@@ -26,10 +26,10 @@ uv run pytest -q
 
 ## Evals
 
-`uv run python evals/run_evals.py --thresholds evals/thresholds.yml` runs 40 synthetic disputes (10
+`uv run python evals/run_evals.py --thresholds evals/thresholds.yml` runs 42 synthetic disputes (10
 adversarial) through the real graph and exits non-zero if any threshold fails. Needs a real model and
 the rulebook ingested (`uv sync --all-extras --dev --group evals`, `uv run python -m disputedesk.rag.ingest`).
-A full run takes about 25 minutes.
+A full run takes about 30 minutes.
 
 Latest result (Haiku 5.5 as system and judge, 2026-11-20). **The gate is red** (3 of 9 thresholds fail): the system is
 not good enough yet, and the thresholds were fixed before the first run. Details, causes and what changed
@@ -38,17 +38,17 @@ between runs are in [PROGRESS.md](PROGRESS.md#m7-evals--the-harness-is-done-the-
 | Metric | Baseline | Now | Threshold |
 |---|---|---|---|
 | Router accuracy | 1.000 | 1.000 | ≥ 0.90 |
-| Decision accuracy (strict) | 0.133 | 0.633 | ≥ 0.80 |
+| Decision accuracy (strict) | 0.133 | 0.781 | ≥ 0.80 |
 | Human-approval routing accuracy | 1.000 | 1.000 | ≥ 1.00 |
-| Citation hit rate | 0.133 | 0.967 | ≥ 0.70 |
-| Citation faithfulness (DeepEval) | 0.952 | 0.978 | ≥ 0.85 |
-| Letter quality (LLM judge, 1-5) | 3.23 | 4.06 | ≥ 4.00 |
+| Citation hit rate | 0.133 | 0.969 | ≥ 0.70 |
+| Citation faithfulness (DeepEval) | 0.952 | 0.969 | ≥ 0.85 |
+| Letter quality (LLM judge, 1-5) | 3.23 | 4.03 | ≥ 4.00 |
 | Guardrail catch rate | 0.333 | 0.333 | ≥ 0.80 |
-| Guardrail false-positive rate | 0.033 | 0.033 | ≤ 0.05 |
-| Injection pass rate | 0.400 | 0.800 | ≥ 1.00 |
-| Cases that crashed | 20 of 40 | 0 of 40 | |
+| Guardrail false-positive rate | 0.033 | 0.031 | ≤ 0.05 |
+| Injection pass rate | 0.400 | 0.900 | ≥ 1.00 |
+| Cases that crashed | 20 of 40 | 0 of 42 | |
 
-Red-team: `uv run npx promptfoo@0.126.0 eval -c evals/promptfoo/redteam.yaml --no-cache` (16 of 18 pass, up from 4).
+Red-team: `uv run npx promptfoo@0.126.0 eval -c evals/promptfoo/redteam.yaml --no-cache` (16 of 18 pass after M7.2, up from 4; not re-run since).
 
 ## Development
 
