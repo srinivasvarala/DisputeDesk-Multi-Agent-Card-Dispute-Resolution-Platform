@@ -271,3 +271,10 @@ Retrieval results on the 25-question set (k=5):
 - `asyncio.run` per NeMo check against a cached `Guardrails` instance: no failure seen (repeated checks pass in tests), but not stress-tested across threads. Revisit if NeMo gets a loop-bound LLM client.
 - `RedactingFilter` loads spaCy on first log line and could re-enter if Presidio logs. Nothing attaches it yet; guard it when it is wired in (M5/M6).
 
+### Policy alignment (decided with the user)
+- **Cap boundary:** approval at **$500.00 or more**. `policy/11` now matches `graph.rules.risk_tier` and the guardrail rule.
+- **Reject path:** `policy/11` used to let an automated reject through at any amount, while the graph sends HIGH-risk cases (amount at or above the threshold, or a high-risk merchant) to a human for accept *and* reject. The policy now follows the code: a wrong reject on a large or high-risk case is as costly as a wrong accept.
+- Policy text changed, so the RAG index was re-ingested (`python -m disputedesk.rag.ingest`: 2 chunks updated). Re-run it after any edit to `data/policies/`.
+- Policy-agent and graph test fixtures use the new wording, and a test now reads the real policy file so the fixture cannot drift from it.
+- The retrieval eval (`evals/run_evals.py`) does not exist yet (M7), so retrieval quality after the rewording is covered by the integration tests only.
+

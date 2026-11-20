@@ -28,8 +28,8 @@ class StubRetriever:
                 section="Automated decision limit",
                 doc_title="Approval Thresholds and Escalation",
                 chunk_index=0,
-                content="An automated analyst may finalise an accept decision only when the "
-                "refund amount is $500.00 or less.",
+                content="An automated analyst may finalise a decision only when the "
+                "disputed amount is below $500.00.",
                 score=1.0,
                 rrf_score=0.03,
             )

@@ -5,19 +5,20 @@
 
 ## Automated decision limit
 
-An automated analyst may finalise an **accept** decision only when the refund amount is
-**below $500.00** and no escalation trigger below applies. Any refund of $500.00 or more must be
-approved by a human approver before it is paid.
+An automated analyst may finalise a decision, accept or reject, only when the disputed amount is
+**below $500.00**, the merchant is not in the high risk tier (see
+`13-merchant-risk-monitoring.md`) and no escalation trigger below applies. A refund of $500.00 or
+more must be approved by a human approver before it is paid. A reject of a dispute of $500.00 or
+more, or against a high-risk merchant, is also decided by a human approver.
 
-An automated analyst may finalise a **reject** decision at any amount, provided no escalation
-trigger applies and the decision letter cites the rule relied on.
+The decision letter must cite the rule relied on.
 
 ## Mandatory escalation triggers
 
 A case must be escalated to a human approver, without an automated final decision, when any of
 the following is true:
 
-1. The proposed refund is $500.00 or more.
+1. The disputed amount is $500.00 or more, or the merchant is in the high risk tier.
 2. The analyst's confidence in the decision is below 0.70.
 3. The reviewer has rejected the draft decision twice. A third draft is not attempted.
 4. The evidence conflicts in a way the reason-code rules do not settle.
