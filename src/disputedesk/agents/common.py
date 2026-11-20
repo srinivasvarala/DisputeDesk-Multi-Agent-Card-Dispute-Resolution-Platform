@@ -24,9 +24,19 @@ class AgentOutputError(RuntimeError):
     """The model did not produce a usable structured answer."""
 
 
+UNTRUSTED_LABEL = 'trust="untrusted"'
+
+
 def untrusted(tag: str, text: str) -> str:
-    """Wrap customer/merchant text as escaped data. It only ever goes in the user message."""
-    return f"<{tag}>\n{html.escape(text)}\n</{tag}>"
+    """Wrap customer/merchant-derived text as labelled, escaped data.
+
+    - Labelled: the opening tag carries `trust="untrusted"`, which every system prompt tells the
+      model to treat as data, never as instructions.
+    - Escaped: `<`, `>`, `&` and quotes are escaped, so the text cannot close the tag or open a
+      new one to impersonate trusted content.
+    - Only ever placed in the user message, never in the system prompt.
+    """
+    return f"<{tag} {UNTRUSTED_LABEL}>\n{html.escape(text)}\n</{tag}>"
 
 
 def complete_json[T: BaseModel](

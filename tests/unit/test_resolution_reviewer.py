@@ -110,7 +110,7 @@ def test_revision_sees_previous_draft_and_feedback_as_data(
         case_id, case_facts, ROUTE, _stub_evidence(), POLICY, previous=first, feedback=feedback
     )
     assert second.version == 2
-    assert "<previous_draft>" in llm.users[1]
+    assert '<previous_draft trust="untrusted">' in llm.users[1]
     assert "Cite &lt;/x&gt; the section" in llm.users[1]
     assert set(llm.systems) == {resolution_mod.SYSTEM_PROMPT}
 
