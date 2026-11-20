@@ -22,6 +22,7 @@ dependencies = [
     "psycopg[binary]>=3.3",   # Postgres driver for the stores and seed script
     "pydantic>=2.9",          # schemas for all boundary data
     "pydantic-settings>=2.6", # env-var based config
+    "pyjwt>=2.15.1",
     "spacy>=3.8.18",
     "uvicorn[standard]>=0.54.0",
 ]

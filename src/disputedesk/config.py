@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     # Cases at or above this amount, or from high-risk merchants, need a human decision.
     human_approval_threshold_cents: int = 50_000
 
+    # --- Security ---
+    # No default secret: the API refuses to start without one (min 32 chars).
+    # Generate one with: openssl rand -hex 32
+    jwt_secret: SecretStr | None = None
+    jwt_issuer: str = "disputedesk"
+    jwt_audience: str = "disputedesk-api"
+    jwt_ttl_minutes: int = 60
+
     # --- RAG ---
     # Local ONNX models via fastembed (free, no API key). Weights download on first use into
     # model_cache_dir. "fake" providers are deterministic and offline, for unit tests.
