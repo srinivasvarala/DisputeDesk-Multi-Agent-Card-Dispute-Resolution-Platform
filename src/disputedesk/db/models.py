@@ -73,6 +73,16 @@ class ReasonCode(StrEnum):
     NOT_AS_DESCRIBED = "not_as_described"
 
 
+class EntryMode(StrEnum):
+    """How a card-present charge was read (rulebook 03). Unset for online charges."""
+
+    CHIP_PIN = "chip_pin"
+    CHIP_NO_PIN = "chip_no_pin"
+    MAGSTRIPE_FALLBACK = "magstripe_fallback"
+    KEY_ENTERED = "key_entered"
+    CONTACTLESS = "contactless"
+
+
 class CaseStatus(StrEnum):
     OPEN = "open"
     IN_REVIEW = "in_review"
@@ -117,6 +127,8 @@ class Transaction(Record):
     status: TxnStatus
     description: str
     posted_at: UtcDatetime
+    # System record from the terminal; None = not recorded (always None for online charges).
+    entry_mode: EntryMode | None = None
 
 
 class Shipment(Record):
@@ -127,6 +139,9 @@ class Shipment(Record):
     status: ShipmentStatus
     shipped_at: UtcDatetime
     delivered_at: UtcDatetime | None = None
+    # From the carrier. None = not recorded (rulebook 04 needs both to treat tracking as proof).
+    delivery_address_matches: bool | None = None
+    signature_confirmed: bool | None = None
 
 
 class Case(Record):
@@ -139,6 +154,10 @@ class Case(Record):
     status: CaseStatus
     opened_at: UtcDatetime
     updated_at: UtcDatetime
+    # Fraud filing items the cardholder confirmed (rulebook 02). None = not recorded.
+    fraud_declaration_signed: bool | None = None
+    card_reissued: bool | None = None
+    card_reported_lost_at: UtcDatetime | None = None
 
 
 class CaseDraft(Record):

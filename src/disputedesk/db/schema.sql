@@ -99,3 +99,12 @@ DROP TRIGGER IF EXISTS audit_log_no_truncate ON audit_log;
 CREATE TRIGGER audit_log_no_truncate
     BEFORE TRUNCATE ON audit_log
     FOR EACH STATEMENT EXECUTE FUNCTION audit_log_reject_change();
+
+-- Columns added after the first release. NULL means "not recorded". Idempotent, so existing
+-- databases pick them up the next time the schema is applied.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS entry_mode TEXT;
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS delivery_address_matches BOOLEAN;
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS signature_confirmed BOOLEAN;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS fraud_declaration_signed BOOLEAN;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS card_reissued BOOLEAN;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS card_reported_lost_at TIMESTAMPTZ;

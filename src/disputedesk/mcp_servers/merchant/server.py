@@ -24,6 +24,11 @@ DEFAULT_PORT = 8102
 READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_world_hint=False)
 
 
+# Rulebook 09: tracking from any other carrier must be confirmed with the carrier before it can
+# prove delivery. Plain data here, not something the model decides.
+APPROVED_CARRIERS = frozenset({"ParcelPath", "SwiftShip", "Northstar Freight"})
+
+
 class DisputeRate(BaseModel):
     merchant_id: str
     window_start: datetime
@@ -47,6 +52,17 @@ class DeliveryStatus(BaseModel):
     tracking_number: str | None = None
     shipped_at: datetime | None = None
     delivered_at: datetime | None = None
+    delivery_address_matches: bool | None = Field(
+        default=None,
+        description="Carrier: delivered to the order's shipping address. None = not recorded",
+    )
+    signature_confirmed: bool | None = Field(
+        default=None, description="Carrier signature on delivery. None = not recorded"
+    )
+    carrier_approved: bool | None = Field(
+        default=None,
+        description="Carrier is on the rulebook's approved list (09-evidence-standards.md)",
+    )
 
 
 def build_server(
@@ -123,6 +139,9 @@ def build_server(
             tracking_number=shipment.tracking_number,
             shipped_at=shipment.shipped_at,
             delivered_at=shipment.delivered_at,
+            delivery_address_matches=shipment.delivery_address_matches,
+            signature_confirmed=shipment.signature_confirmed,
+            carrier_approved=shipment.carrier in APPROVED_CARRIERS,
         )
 
     return server

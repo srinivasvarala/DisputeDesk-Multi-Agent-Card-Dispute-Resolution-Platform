@@ -24,6 +24,7 @@ from disputedesk.db.models import (
     CaseStatus,
     Channel,
     Customer,
+    EntryMode,
     Merchant,
     MerchantCategory,
     ReasonCode,
@@ -227,6 +228,7 @@ def _transactions(
             status=d.status,
             description=d.description,
             posted_at=d.posted_at,
+            entry_mode=EntryMode.CHIP_PIN if d.channel == Channel.CARD_PRESENT else None,
         )
         txns.append(txn)
         by_draft[id(d)] = txn
@@ -268,6 +270,13 @@ def _shipments(
                 status=status,
                 shipped_at=shipped,
                 delivered_at=delivered,
+                # Derived, not drawn from the rng, so the rest of the seed stays unchanged.
+                delivery_address_matches=True if status == ShipmentStatus.DELIVERED else None,
+                signature_confirmed=(
+                    True
+                    if status == ShipmentStatus.DELIVERED and txn.amount_cents > 25_000
+                    else None
+                ),
             )
         )
     return out
@@ -338,6 +347,8 @@ def _cases(
                 status=status,
                 opened_at=opened,
                 updated_at=opened,
+                fraud_declaration_signed=True if reason == ReasonCode.FRAUD else None,
+                card_reissued=True if reason == ReasonCode.FRAUD else None,
             )
         )
     return out
@@ -392,26 +403,34 @@ def load(conn: psycopg.Connection, data: SeedData, *, reset: bool = False) -> No
             ],
         )  # fmt: skip
         cur.executemany(
-            "INSERT INTO transactions VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO transactions (txn_id, customer_id, merchant_id, amount_cents, currency,"
+            " channel, status, description, posted_at, entry_mode)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 (t.txn_id, t.customer_id, t.merchant_id, t.amount_cents, t.currency, t.channel,
-                 t.status, t.description, t.posted_at)
+                 t.status, t.description, t.posted_at, t.entry_mode)
                 for t in data.transactions
             ],
         )  # fmt: skip
         cur.executemany(
-            "INSERT INTO shipments VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO shipments (shipment_id, txn_id, carrier, tracking_number, status,"
+            " shipped_at, delivered_at, delivery_address_matches, signature_confirmed)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 (s.shipment_id, s.txn_id, s.carrier, s.tracking_number, s.status, s.shipped_at,
-                 s.delivered_at)
+                 s.delivered_at, s.delivery_address_matches, s.signature_confirmed)
                 for s in data.shipments
             ],
         )  # fmt: skip
         cur.executemany(
-            "INSERT INTO cases VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO cases (case_id, txn_id, customer_id, reason_code, amount_cents,"
+            " customer_narrative, status, opened_at, updated_at, fraud_declaration_signed,"
+            " card_reissued, card_reported_lost_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             [
                 (c.case_id, c.txn_id, c.customer_id, c.reason_code, c.amount_cents,
-                 c.customer_narrative, c.status, c.opened_at, c.updated_at)
+                 c.customer_narrative, c.status, c.opened_at, c.updated_at,
+                 c.fraud_declaration_signed, c.card_reissued, c.card_reported_lost_at)
                 for c in data.cases
             ],
         )  # fmt: skip

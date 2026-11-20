@@ -24,6 +24,7 @@ from disputedesk.db.models import (
     Channel,
     Customer,
     Decision,
+    EntryMode,
     Merchant,
     MerchantCategory,
     ReasonCode,
@@ -81,6 +82,8 @@ class GoldenShipment(Model):
     tracking_number: str
     shipped_days_ago: int
     delivered_days_ago: int | None = None
+    delivery_address_matches: bool | None = None
+    signature_confirmed: bool | None = None
 
 
 class EarlierCharge(Model):
@@ -121,6 +124,12 @@ class GoldenCase(Model):
     shipment: GoldenShipment | None = None
     earlier_charges: list[EarlierCharge] = Field(default_factory=list)
     prior_disputes: int = Field(default=0, ge=0, description="Other disputes in the last 90 days")
+    entry_mode: EntryMode | None = None
+    fraud_declaration_signed: bool | None = None
+    card_reissued: bool | None = None
+    card_reported_lost_hours_before_txn: float | None = Field(
+        default=None, description="None = the card was not reported lost or stolen"
+    )
     claimed_reason: ReasonCode
     narrative: str
     expected: Expected
@@ -166,6 +175,7 @@ def _charge(
     *,
     status: TxnStatus,
     cents: int,
+    entry_mode: EntryMode | None = None,
 ) -> Transaction:
     return Transaction(
         txn_id=txn_id,
@@ -176,6 +186,7 @@ def _charge(
         status=status,
         description=c.description,
         posted_at=when,
+        entry_mode=entry_mode,
     )
 
 
@@ -242,6 +253,7 @@ def build_world(cases: list[GoldenCase], now: datetime) -> World:
                 posted,
                 status=c.txn_status,
                 cents=c.amount_cents,
+                entry_mode=c.entry_mode,
             )
         )
         for k, e in enumerate(c.earlier_charges, start=1):
@@ -271,6 +283,8 @@ def build_world(cases: list[GoldenCase], now: datetime) -> World:
                         if s.delivered_days_ago is not None
                         else None
                     ),
+                    delivery_address_matches=s.delivery_address_matches,
+                    signature_confirmed=s.signature_confirmed,
                 )
             )
         disputes.append(
@@ -284,6 +298,13 @@ def build_world(cases: list[GoldenCase], now: datetime) -> World:
                 status=CaseStatus.OPEN,
                 opened_at=now - timedelta(days=1),
                 updated_at=now - timedelta(days=1),
+                fraud_declaration_signed=c.fraud_declaration_signed,
+                card_reissued=c.card_reissued,
+                card_reported_lost_at=(
+                    posted - timedelta(hours=c.card_reported_lost_hours_before_txn)
+                    if c.card_reported_lost_hours_before_txn is not None
+                    else None
+                ),
             )
         )
         for p in range(c.prior_disputes):  # earlier, unrelated disputes by the same customer

@@ -43,10 +43,13 @@ Decisions:
 Rules:
 - Decide only from the evidence and the policy answer provided. Do not invent facts.
 - Follow the policy answer. Mention the rulebook section you relied on in the rationale.
-- Decide from the facts you have. The rulebook asks for details your tools cannot show (for \
-example the delivery address, the expected delivery date, whether a fraud declaration was \
-signed). Do not escalate because such a detail is missing: use what the evidence and the \
-cardholder's narrative say, and lower your confidence if the gap matters.
+- Decide from the facts you have. A field that is null was not recorded: it is not "no". Do not \
+escalate because a detail is missing: use what the evidence and the cardholder's narrative say, \
+and lower your confidence if the gap matters. System records (carrier data, terminal entry \
+mode) outweigh the cardholder's narrative.
+- `carrier_approved` false means the tracking must be confirmed with the carrier before it \
+proves delivery. `delivery_address_matches` false means delivery is not proven (rulebook 04). \
+For an order above $250.00 delivery also needs `signature_confirmed` true.
 - Do not escalate because of the amount, the merchant's risk tier or the cardholder's dispute \
 history. The system handles those itself: a drafted accept or reject for such a case goes to a \
 human approver anyway, so give your recommended decision.
@@ -171,6 +174,19 @@ def apply_escalation_rules(result: _Decision, evidence: Evidence) -> _Decision:
     )
 
 
+def filing_attributes(facts: CaseFacts, evidence: Evidence) -> str:
+    """Fraud filing items as structured attributes (booleans and a derived fact, no free text)."""
+    attrs: dict[str, object] = {
+        "fraud_declaration_signed": facts.fraud_declaration_signed,
+        "card_reissued": facts.card_reissued,
+    }
+    if facts.card_reported_lost_at is not None:
+        attrs["card_reported_lost_before_charge"] = (
+            facts.card_reported_lost_at < evidence.transaction.posted_at
+        )
+    return "".join(f' {k}="{str(v).lower()}"' for k, v in attrs.items() if v is not None)
+
+
 def build_user_message(
     facts: CaseFacts,
     route: Route,
@@ -181,7 +197,7 @@ def build_user_message(
 ) -> str:
     parts = [
         f'<case amount_cents="{facts.amount_cents}" reason_code="{route.reason_code}" '
-        f'risk_tier="{route.risk_tier}"/>',
+        f'risk_tier="{route.risk_tier}"{filing_attributes(facts, evidence)}/>',
         untrusted("cardholder_narrative", facts.narrative),
         untrusted("evidence", evidence.model_dump_json(indent=1)),
         untrusted("policy_answer", policy.model_dump_json(indent=1)),

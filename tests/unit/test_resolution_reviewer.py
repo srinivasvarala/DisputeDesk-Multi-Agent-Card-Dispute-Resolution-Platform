@@ -251,3 +251,26 @@ def test_a_letter_that_never_names_one_fails_the_draft(
     bad = reply(letter="Dear merchant, accepted.")
     with pytest.raises(AgentOutputError, match="must name the rulebook document"):
         decide(store, box, case_facts, bad, bad)
+
+
+def test_filing_items_reach_the_prompt_as_structured_attributes(case_facts: CaseFacts) -> None:
+    from datetime import timedelta
+
+    from disputedesk.agents.resolution import filing_attributes
+
+    evidence = _stub_evidence()
+    posted = evidence.transaction.posted_at
+    facts = case_facts.model_copy(
+        update={
+            "fraud_declaration_signed": True,
+            "card_reissued": False,
+            "card_reported_lost_at": posted - timedelta(hours=5),
+        }
+    )
+    assert filing_attributes(facts, evidence) == (
+        ' fraud_declaration_signed="true" card_reissued="false"'
+        ' card_reported_lost_before_charge="true"'
+    )
+    later = facts.model_copy(update={"card_reported_lost_at": posted + timedelta(hours=1)})
+    assert 'card_reported_lost_before_charge="false"' in filing_attributes(later, evidence)
+    assert filing_attributes(case_facts, evidence) == ""  # nothing recorded, nothing said

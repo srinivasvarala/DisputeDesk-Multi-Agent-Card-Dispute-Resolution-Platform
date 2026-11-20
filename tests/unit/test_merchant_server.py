@@ -160,3 +160,30 @@ async def test_get_delivery_status_rejects_bad_input(
 ) -> None:
     error_text(await call(merchant_server, "get_delivery_status", args))
     assert last_audit(store).outcome == outcome
+
+
+async def test_get_delivery_status_reports_the_carrier_facts_the_rulebook_needs(
+    merchant_server: AuditedMCPServer, store: InMemoryStore
+) -> None:
+    """Rulebook 04: delivery proof needs an approved carrier, a matching address and, above
+    $250.00, a signature. An unrecorded fact stays null, never false."""
+    shipment = next(s for s in store.shipments.values() if s.status == "delivered")
+    store.shipments[shipment.txn_id] = shipment.model_copy(
+        update={
+            "carrier": "QuickPost",
+            "delivery_address_matches": False,
+            "signature_confirmed": None,
+        }
+    )
+    data = ok(await call(merchant_server, "get_delivery_status", {"txn_id": shipment.txn_id}))
+    assert data["carrier_approved"] is False
+    assert data["delivery_address_matches"] is False
+    assert data["signature_confirmed"] is None
+
+
+async def test_approved_carrier_is_flagged(
+    merchant_server: AuditedMCPServer, store: InMemoryStore
+) -> None:
+    shipment = next(s for s in store.shipments.values() if s.carrier in ("ParcelPath", "SwiftShip"))
+    data = ok(await call(merchant_server, "get_delivery_status", {"txn_id": shipment.txn_id}))
+    assert data["carrier_approved"] is True

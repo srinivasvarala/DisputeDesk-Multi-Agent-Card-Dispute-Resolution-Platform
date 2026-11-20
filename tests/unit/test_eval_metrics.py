@@ -73,7 +73,7 @@ def test_guardrail_metrics() -> None:
     expecting_action = [c for c in CASES if c.kind == "adversarial" and c.guardrail != "allow"]
     assert catch.denominator == len(expecting_action)
     assert catch.numerator == 2
-    assert fp.denominator == 30
+    assert fp.denominator == 32
     assert fp.numerator == 1
 
 

@@ -76,3 +76,19 @@ def test_disputes_have_supporting_evidence_shape() -> None:
 def test_all_contact_data_is_synthetic() -> None:
     for c in generate().customers:
         assert c.email.endswith("@example.com")
+
+
+def test_new_facts_are_derived_without_changing_the_rest_of_the_seed() -> None:
+    from disputedesk.db.models import Channel, EntryMode
+
+    data = generate()
+    card_present = [t for t in data.transactions if t.channel == Channel.CARD_PRESENT]
+    assert card_present
+    assert all(t.entry_mode == EntryMode.CHIP_PIN for t in card_present)
+    assert all(t.entry_mode is None for t in data.transactions if t.channel == Channel.ONLINE)
+    delivered = [s for s in data.shipments if s.status == ShipmentStatus.DELIVERED]
+    assert all(s.delivery_address_matches is True for s in delivered)
+    assert all(s.delivery_address_matches is None for s in data.shipments if s not in delivered)
+    fraud = [c for c in data.cases if c.reason_code == ReasonCode.FRAUD]
+    assert all(c.fraud_declaration_signed and c.card_reissued for c in fraud)
+    assert all(c.fraud_declaration_signed is None for c in data.cases if c not in fraud)

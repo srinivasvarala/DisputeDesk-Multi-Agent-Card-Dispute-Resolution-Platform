@@ -6,6 +6,7 @@ Fields that hold model output are small and typed, so a checkpoint is easy to re
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +31,10 @@ class CaseFacts(Model):
     amount_cents: int = Field(gt=0)
     claimed_reason: ReasonCode
     narrative: str
+    # Fraud filing items, as recorded at filing. None = not recorded.
+    fraud_declaration_signed: bool | None = None
+    card_reissued: bool | None = None
+    card_reported_lost_at: datetime | None = None
 
 
 class Route(Model):
