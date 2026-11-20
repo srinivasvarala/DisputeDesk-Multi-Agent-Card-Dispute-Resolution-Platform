@@ -6,7 +6,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 |---|---|---|---|
 | M0: Scaffold | ✅ Done | 2026-11-19 | `e473ea0`, `c1098da` |
 | M1: Data and MCP servers | ✅ Done | 2026-11-19 | `5e295cf`, `27ecb5b`, `3b7fdb4`, `7850a87`, `d4d52e9` |
-| M2: RAG over dispute policies | ✅ Done | 2026-11-19 | `27fd98f`, `8a32400`, `0631988`, `1748131`, `ae83fc6`, `7e8f6a3`, `9c5d32c` |
+| M2: RAG over dispute policies | ✅ Done | 2026-11-19 | `27fd98f`, `8a32400`, `0631988`, `1748131`, `ae83fc6`, `7e8f6a3`, `9c5d32c`, `7537998` |
 | M3: Multi-agent graph | ⏳ Not started | | |
 | M4: Guardrails | ⏳ Not started | | |
 | M5: Security | ⏳ Not started | | |
@@ -125,7 +125,7 @@ Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 | Every answer carries at least one citation | ✅ Enforced in code (`PolicyAnswer.citations` min 1, verbatim-quote check); integration test over all 25 questions |
 | Ingestion is idempotent | ✅ Second run: 0 embedded, 92 unchanged (1.3s); tests cover change/add/remove, model change, dimension change, rollback |
 | Lint, types, tests | ✅ ruff, mypy; 172 unit, 47 integration |
-| CI green | ✅ [Run 44652878826](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44652878826) passed on `9cd6ac2` in ~4 min, including ingest, model download + cache, and the retrieval-quality gate |
+| CI green | ✅ [Run 44652878826](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44652878826) passed on `9cd6ac2` in ~4 min, including ingest, model download + cache, and the retrieval-quality gate; [run 44654741164](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44654741164) passed again on `7537998` after the code-review fixes |
 
 Retrieval results on the 25-question set (k=5):
 
