@@ -1,5 +1,6 @@
 """FastAPI app: start a dispute, read its progress, and approve or reject it.
 
+    GET  /disputes                  case list, optionally filtered by status
     POST /disputes                  start the workflow for an open case (runs in the background)
     GET  /disputes/{id}             case status, workflow state, draft, review and route taken
     POST /disputes/{id}/approve     give the human decision a paused case is waiting for
@@ -28,12 +29,13 @@ from disputedesk.api.runtime import (
 from disputedesk.api.schemas import (
     Accepted,
     ApprovalRequest,
+    CaseSummary,
     DisputeView,
     StartDispute,
     WorkflowState,
 )
 from disputedesk.config import Settings, get_settings
-from disputedesk.db.models import AuditEntry, AuditOutcome, CaseId
+from disputedesk.db.models import AuditEntry, AuditOutcome, CaseId, CaseStatus
 from disputedesk.observability.otel import instrument_app, setup_telemetry
 from disputedesk.security.jwt import Principal, require_jwt_config
 from disputedesk.security.scopes import Scope
@@ -158,6 +160,26 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             raise
         background.add_task(rt().run, body.case_id)
         return Accepted(case_id=body.case_id, workflow=WorkflowState.RUNNING)
+
+    @app.get("/disputes")
+    def list_disputes(
+        case_status: CaseStatus | None = None,
+        limit: int = Query(default=100, ge=1, le=500),
+        _: Principal = Depends(auth.require(Scope.DISPUTES_READ)),  # noqa: B008
+    ) -> list[CaseSummary]:
+        # A read of case state, like GET /disputes/{id}: not audited (CLAUDE.md).
+        cases = rt().store.list_cases()
+        return [
+            CaseSummary(
+                case_id=c.case_id,
+                reason_code=c.reason_code,
+                amount_cents=c.amount_cents,
+                case_status=c.status,
+                opened_at=c.opened_at,
+            )
+            for c in cases
+            if case_status is None or c.status == case_status
+        ][:limit]
 
     @app.get("/disputes/{case_id}")
     def get_dispute(

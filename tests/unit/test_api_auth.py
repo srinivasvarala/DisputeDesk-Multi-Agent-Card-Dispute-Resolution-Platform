@@ -25,6 +25,7 @@ type Send = Callable[[TestClient], int]
 
 ROUTES: dict[str, Send] = {
     "start": lambda c: c.post("/disputes", json={"case_id": "case_0001"}).status_code,
+    "list": lambda c: c.get("/disputes").status_code,
     "read": lambda c: c.get("/disputes/case_0001").status_code,
     "approve": lambda c: c.post("/disputes/case_0001/approve", json={"approved": True}).status_code,
 }

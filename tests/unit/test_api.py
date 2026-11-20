@@ -270,3 +270,28 @@ def test_a_run_that_crashes_while_resuming_is_failed_and_cannot_be_approved_agai
     assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 409
     failure = [e for e in store.audit if e.tool == "workflow_failed"][-1]
     assert failure.error == "ToolCallError"  # type only, no message text
+
+
+def test_list_disputes_filters_by_status_and_is_not_audited(
+    make: Make, store: InMemoryStore
+) -> None:
+    client, _, _ = make()
+    before = len(store.read_audit(limit=200))
+
+    everything = client.get("/disputes").json()
+    open_only = client.get("/disputes", params={"case_status": "open"}).json()
+
+    assert len(everything) == len(store.list_cases())
+    assert open_only
+    assert {c["case_status"] for c in open_only} == {"open"}
+    assert set(everything[0]) == {
+        "case_id",
+        "reason_code",
+        "amount_cents",
+        "case_status",
+        "opened_at",
+    }
+    assert len(client.get("/disputes", params={"limit": 3}).json()) == 3
+    assert client.get("/disputes", params={"limit": 0}).status_code == 422
+    assert client.get("/disputes", params={"case_status": "bogus"}).status_code == 422
+    assert len(store.read_audit(limit=200)) == before
