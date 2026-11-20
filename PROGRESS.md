@@ -7,7 +7,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M0: Scaffold | ✅ Done | 2026-11-19 | `e473ea0`, `c1098da` |
 | M1: Data and MCP servers | ✅ Done | 2026-11-19 | `5e295cf`, `27ecb5b`, `3b7fdb4`, `7850a87`, `d4d52e9` |
 | M2: RAG over dispute policies | ✅ Done | 2026-11-19 | `27fd98f`, `8a32400`, `0631988`, `1748131`, `ae83fc6`, `7e8f6a3`, `9c5d32c`, `7537998` |
-| M3: Multi-agent graph | ✅ Done (CI not yet run) | 2026-11-19 | `db8dfe8`, `3666e3e`, `0df42de`, `183817d`, `d095789`, `278f927`, `a7a348a`, `57183d1`, `6827e19` |
+| M3: Multi-agent graph | ✅ Done | 2026-11-19 | `db8dfe8`, `3666e3e`, `0df42de`, `183817d`, `d095789`, `278f927`, `a7a348a`, `57183d1`, `6827e19`, `4c5c935`, `887b0f2` |
 | M4: Guardrails | ⏳ Not started | | |
 | M5: Security | ⏳ Not started | | |
 | M6: Observability | ⏳ Not started | | |
@@ -193,7 +193,7 @@ Retrieval results on the 25-question set (k=5):
 | Integration tests: happy path and reviewer-rejection path | ✅ Plus one-revision-then-approve, human decline, audit trail per agent |
 | Max 2 reviewer revisions | ✅ Third request escalates with exactly 3 drafts (unit + integration) |
 | Lint, mypy (strict), tests | ✅ ruff clean, mypy clean (55 files), 239 + 53 passing |
-| CI green | ⏳ Not pushed yet |
+| CI green | ✅ [Run 44658984015](https://github.com/srinivasvarala/DisputeDesk-Multi-Agent-Card-Dispute-Resolution-Platform/actions/runs/44658984015) passed on `887b0f2` (lint, mypy, unit, seed, ingest, integration) |
 
 ### Decisions
 - **`POST /disputes` starts the workflow for an existing open case** (`{"case_id": "case_0001"}`). The blueprint did not say whether it creates cases; there is no create-case tool in the `cases` server, and cases come from the seed. Creating cases is a small addition if wanted.
@@ -214,4 +214,3 @@ Retrieval results on the 25-question set (k=5):
 - **Agent quality with a real model is untested** (fake LLM only); that is M7. Prompts have not been tuned.
 - Evidence facts for `get_history`/`get_dispute_rate` carry no `case_id`, so those audit rows are not filterable by case (they are by actor and time).
 - `OllamaClient` still does not close its HTTP client (carried from M0).
-- CI has not run on these commits yet.
