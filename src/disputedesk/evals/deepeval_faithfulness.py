@@ -29,8 +29,16 @@ from deepeval.metrics import FaithfulnessMetric
 from deepeval.models import DeepEvalBaseLLM
 from deepeval.test_case import LLMTestCase
 
+MAX_JUDGE_ATTEMPTS = 3
 QUESTION = "What does the DisputeDesk Rulebook say about how to handle this dispute?"
 SYSTEM = "You are a careful evaluator. When asked for JSON, reply with that JSON object only."
+
+
+def parse_json_object[T: BaseModel](text: str, schema: type[T]) -> T:
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end < start:
+        raise ValueError("judge did not return a JSON object")
+    return schema.model_validate(json.loads(text[start : end + 1]))
 
 
 class JudgeModel(DeepEvalBaseLLM):  # type: ignore[no-untyped-call]
@@ -45,15 +53,18 @@ class JudgeModel(DeepEvalBaseLLM):  # type: ignore[no-untyped-call]
         return str(self.name)
 
     def generate(self, prompt: str, schema: type[BaseModel] | None = None) -> Any:
-        reply = self._llm.complete(
-            system=SYSTEM, messages=[Message(role="user", content=prompt)], max_tokens=8192
-        )
-        if schema is None:
-            return reply.text
-        start, end = reply.text.find("{"), reply.text.rfind("}")
-        if start == -1 or end < start:
-            raise ValueError("judge did not return a JSON object")
-        return schema.model_validate(json.loads(reply.text[start : end + 1]))
+        last: Exception | None = None
+        for _ in range(MAX_JUDGE_ATTEMPTS):  # a judge occasionally returns malformed JSON
+            reply = self._llm.complete(
+                system=SYSTEM, messages=[Message(role="user", content=prompt)], max_tokens=8192
+            )
+            if schema is None:
+                return reply.text
+            try:
+                return parse_json_object(reply.text, schema)
+            except ValueError as exc:  # JSONDecodeError and ValidationError are ValueErrors
+                last = exc
+        raise ValueError(f"judge gave no valid JSON after {MAX_JUDGE_ATTEMPTS} attempts: {last}")
 
     async def a_generate(self, prompt: str, schema: type[BaseModel] | None = None) -> Any:
         return await asyncio.to_thread(self.generate, prompt, schema)

@@ -154,3 +154,18 @@ def test_lenient_decision_accuracy_allows_labelled_alternatives_but_strict_does_
     escalated = {"g06": outcome(g06, decision=Decision.ESCALATE)}
     assert m.decision_accuracy([g06], escalated).value == 0.0
     assert m.decision_accuracy_lenient([g06], escalated).value == 1.0
+
+
+def test_faithfulness_judge_retries_malformed_json() -> None:
+    pytest.importorskip("deepeval")  # optional `evals` dependency group
+    from pydantic import BaseModel
+
+    from disputedesk.evals.deepeval_faithfulness import JudgeModel
+    from disputedesk.llm import FakeClient
+
+    class Verdict(BaseModel):
+        ok: bool
+
+    replies = iter(['{"ok": tru', '{"ok": true}'])
+    judge = JudgeModel(FakeClient(lambda system, messages: next(replies)), "fake")
+    assert judge.generate("p", Verdict) == Verdict(ok=True)
