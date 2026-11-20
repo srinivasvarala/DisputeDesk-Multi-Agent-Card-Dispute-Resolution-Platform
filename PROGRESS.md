@@ -323,4 +323,5 @@ Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 - **Audit flooding:** anonymous 401s no longer write rows (append-only table); they are logged. Authenticated 403s are still audited.
 - **Verifier is required:** `AuditedMCPServer` and `build_server` take `verifier` with no default; `NO_AUTH` is the explicit opt-out (standalone demo servers, single-server unit tests).
 - **Actor namespace:** API audit rows use `user:<sub>`.
-- Still open: reads are not audited (decision pending: audit them, or document the exception in CLAUDE.md); integration tests add permanent rows to the dev `audit_log`.
+- **Reads:** `GET /audit` is audited (fail-closed, written before the data is returned). `GET /disputes/{id}` is deliberately not audited; the exception is documented in CLAUDE.md.
+- Still open: integration tests add permanent rows to the dev `audit_log`.

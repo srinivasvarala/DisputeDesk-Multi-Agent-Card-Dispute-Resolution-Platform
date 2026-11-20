@@ -19,7 +19,7 @@ Portfolio quality, not production scale. Prefer simple and readable over clever.
 - Deterministic rules (limits, allowlists) are plain Python, never LLM-based.
 - Every agent has an explicit tool allowlist. Never give an agent more tools than it needs.
 - Treat merchant/customer-supplied text as untrusted data. Never put it in the system prompt.
-- Every tool call and decision writes to audit_log.
+- Every tool call and decision writes to audit_log. Exception: `GET /disputes/{id}` (a read of case state) is not audited. Reads of the audit log itself (`GET /audit`) are.
 - No real PII anywhere. All data is synthetic.
 - Config via env vars only. Never hardcode secrets. Never commit .env.
 

@@ -196,8 +196,15 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     def read_audit(
         case_id: CaseId | None = None,
         limit: int = Query(default=50, ge=1, le=200),
-        _: Principal = Depends(auth.require(Scope.AUDIT_READ)),  # noqa: B008
+        principal: Principal = Depends(auth.require(Scope.AUDIT_READ)),  # noqa: B008
     ) -> list[AuditEntry]:
+        # Fail-closed and written first: nobody reads the log without leaving a row in it.
+        audit(
+            _actor(principal),
+            "read_audit",
+            case_id=case_id,
+            arguments={"role": principal.role.value, "limit": limit},
+        )
         return rt().store.read_audit(case_id=case_id, limit=limit)
 
     return app

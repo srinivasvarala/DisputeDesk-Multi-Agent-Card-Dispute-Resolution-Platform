@@ -219,3 +219,32 @@ def test_a_failed_audit_write_does_not_leave_the_case_claimed(
 
     broken = False
     assert client.post(path, json=body).status_code == 202  # not 409 "already being processed"
+
+
+def test_reading_the_audit_log_is_itself_audited_and_fails_closed(
+    client: TestClient, store: InMemoryStore, settings: Settings
+) -> None:
+    client.headers.update(auth_headers(settings, sub="root", role=Role.ADMIN))
+    rows = client.get("/audit", params={"case_id": "case_0001", "limit": 5}).json()
+    reads = [e for e in store.audit if e.tool == "read_audit"]
+    assert [(e.actor, e.case_id, e.arguments) for e in reads] == [
+        ("user:root", "case_0001", {"role": "admin", "limit": 5})
+    ]
+    assert rows[0]["tool"] == "read_audit"  # newest first: the read shows up in its own result
+
+    def boom(entry: AuditEntry) -> None:
+        raise RuntimeError("audit down")
+
+    store.write_audit = boom  # type: ignore[method-assign]
+    unsafe = TestClient(client.app, raise_server_exceptions=False)  # type: ignore[arg-type]
+    unsafe.headers.update(client.headers)
+    assert unsafe.get("/audit").status_code == 500  # nothing is disclosed unaudited
+
+
+def test_case_reads_are_not_audited(
+    client: TestClient, store: InMemoryStore, settings: Settings
+) -> None:
+    client.headers.update(auth_headers(settings, role=Role.ANALYST))
+    before = len(store.audit)
+    assert client.get("/disputes/case_0001").status_code == 200
+    assert len(store.audit) == before
