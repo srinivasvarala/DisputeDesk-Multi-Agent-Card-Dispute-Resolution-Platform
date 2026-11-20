@@ -6,13 +6,19 @@ import itertools
 import json
 from collections.abc import Iterable, Iterator, Sequence
 
+from fastapi.testclient import TestClient
+
 from disputedesk.agents.fake_llm import agent_of, demo_responder
+from disputedesk.api.app import create_app
+from disputedesk.api.runtime import Runtime
 from disputedesk.config import Settings
 from disputedesk.db.models import Case, ReasonCode
 from disputedesk.graph import rules
 from disputedesk.llm import FakeClient, Message
 from disputedesk.mcp_servers.common.store import InMemoryStore
 from disputedesk.rag.retriever import RetrievedChunk
+from disputedesk.security.jwt import issue_token
+from disputedesk.security.scopes import Role
 
 APPROVE = json.dumps({"verdict": "approve", "feedback": ""})
 REVISE = json.dumps({"verdict": "revise", "feedback": "Tighten the letter and cite the rule."})
@@ -68,3 +74,20 @@ def needs_approval(case: Case, store: InMemoryStore, settings: Settings) -> bool
         threshold_cents=settings.human_approval_threshold_cents,
     )
     return rules.approval_required(tier)
+
+
+TEST_JWT_SECRET = "test-secret-" + "x" * 32
+
+
+def auth_headers(
+    settings: Settings, *, sub: str = "ana", role: Role = Role.APPROVER
+) -> dict[str, str]:
+    """A bearer header for `sub` with `role`. Default is an approver, who can do everything the
+    workflow tests need."""
+    return {"Authorization": f"Bearer {issue_token(settings, sub=sub, role=role)}"}
+
+
+def authed_client(runtime: Runtime, settings: Settings, **kwargs: object) -> TestClient:
+    client = TestClient(create_app(runtime, settings))
+    client.headers.update(auth_headers(settings, **kwargs))  # type: ignore[arg-type]
+    return client

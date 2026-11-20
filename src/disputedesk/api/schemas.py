@@ -19,8 +19,7 @@ class StartDispute(BaseModel):
 class ApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    approved: bool
-    approver: str = Field(min_length=1, max_length=100)
+    approved: bool  # the approver's identity comes from the token, not the body
     note: str = Field(default="", max_length=1_000)
 
 

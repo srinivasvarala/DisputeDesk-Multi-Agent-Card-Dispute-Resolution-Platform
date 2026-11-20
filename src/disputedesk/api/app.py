@@ -4,8 +4,8 @@
     GET  /disputes/{id}             case status, workflow state, draft, review and route taken
     POST /disputes/{id}/approve     give the human decision a paused case is waiting for
 
-Callers are not authenticated yet; JWT roles arrive in M5 (the `approver` field is then taken
-from the token, not the body).
+Every route needs a bearer JWT whose role grants the route's scope (see security/scopes.py).
+The approver is the token's subject, never a field in the request body.
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
 
+from disputedesk.api.auth import Authenticator
 from disputedesk.api.runtime import (
     CaseNotFoundError,
     Runtime,
@@ -28,14 +29,23 @@ from disputedesk.api.schemas import (
     StartDispute,
     WorkflowState,
 )
+from disputedesk.config import Settings, get_settings
+from disputedesk.security.jwt import Principal, require_jwt_config
+from disputedesk.security.scopes import Scope
 
 
 def _not_found(case_id: str) -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, f"case {case_id} not found")
 
 
-def create_app(runtime: Runtime | None = None) -> FastAPI:
-    """Pass a `Runtime` in tests; by default one is opened from settings at startup."""
+def create_app(runtime: Runtime | None = None, settings: Settings | None = None) -> FastAPI:
+    """Pass a `Runtime` in tests; by default one is opened from settings at startup.
+
+    Raises at startup if JWT_SECRET is missing or too short.
+    """
+    settings = settings or get_settings()
+    require_jwt_config(settings)
+    auth = Authenticator(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -55,7 +65,11 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         return runtime_
 
     @app.post("/disputes", status_code=status.HTTP_202_ACCEPTED)
-    def start_dispute(body: StartDispute, background: BackgroundTasks) -> Accepted:
+    def start_dispute(
+        body: StartDispute,
+        background: BackgroundTasks,
+        _: Principal = Depends(auth.require(Scope.DISPUTES_START)),  # noqa: B008
+    ) -> Accepted:
         try:
             rt().claim_start(body.case_id)
         except CaseNotFoundError:
@@ -68,7 +82,10 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         return Accepted(case_id=body.case_id, workflow=WorkflowState.RUNNING)
 
     @app.get("/disputes/{case_id}")
-    def get_dispute(case_id: str) -> DisputeView:
+    def get_dispute(
+        case_id: str,
+        _: Principal = Depends(auth.require(Scope.DISPUTES_READ)),  # noqa: B008
+    ) -> DisputeView:
         try:
             return rt().view(case_id)
         except CaseNotFoundError:
@@ -76,7 +93,10 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
 
     @app.post("/disputes/{case_id}/approve", status_code=status.HTTP_202_ACCEPTED)
     def approve_dispute(
-        case_id: str, body: ApprovalRequest, background: BackgroundTasks
+        case_id: str,
+        body: ApprovalRequest,
+        background: BackgroundTasks,
+        principal: Principal = Depends(auth.require(Scope.DISPUTES_APPROVE)),  # noqa: B008
     ) -> Accepted:
         try:
             rt().claim_resume(case_id)
@@ -84,7 +104,7 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
             raise _not_found(case_id) from None
         except WorkflowConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
-        background.add_task(rt().resume, case_id, body)
+        background.add_task(rt().resume, case_id, body, principal.sub)
         return Accepted(case_id=case_id, workflow=WorkflowState.RUNNING)
 
     return app

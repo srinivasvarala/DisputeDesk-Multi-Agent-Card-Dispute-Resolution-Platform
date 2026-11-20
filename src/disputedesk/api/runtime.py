@@ -133,9 +133,9 @@ class Runtime:
         """Run a claimed case from the start until it finishes or pauses."""
         self._drive(case_id, DisputeState(case_id=case_id))
 
-    def resume(self, case_id: str, decision: ApprovalRequest) -> None:
+    def resume(self, case_id: str, decision: ApprovalRequest, approver: str) -> None:
         """Continue a claimed, paused case with the human's decision."""
-        self._drive(case_id, Command(resume=decision.model_dump()))
+        self._drive(case_id, Command(resume={**decision.model_dump(), "approver": approver}))
 
     def _claim_locked(self, case_id: str) -> None:
         if case_id in self._active:

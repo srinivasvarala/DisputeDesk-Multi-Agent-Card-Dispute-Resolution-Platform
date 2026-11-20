@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
 
-from disputedesk.api.app import create_app
 from disputedesk.api.runtime import Runtime, build_runtime
 from disputedesk.config import Settings
 from disputedesk.db.models import CaseStatus
@@ -14,14 +13,21 @@ from disputedesk.graph.state import DisputeState
 from disputedesk.llm import FakeClient
 from disputedesk.mcp_servers.common.store import InMemoryStore
 from tests.conftest import make_settings
-from tests.graph_helpers import StubRetriever, always_revise, fake_llm, needs_approval
+from tests.graph_helpers import (
+    TEST_JWT_SECRET,
+    StubRetriever,
+    always_revise,
+    authed_client,
+    fake_llm,
+    needs_approval,
+)
 
 type Make = Callable[..., tuple[TestClient, Runtime, list[str]]]
 
 
 @pytest.fixture
 def settings() -> Settings:
-    return make_settings()
+    return make_settings(jwt_secret=TEST_JWT_SECRET)
 
 
 @pytest.fixture
@@ -35,7 +41,7 @@ def make(store: InMemoryStore, settings: Settings) -> Make:
             store=store,
             checkpointer=InMemorySaver(),
         )
-        return TestClient(create_app(runtime)), runtime, calls
+        return authed_client(runtime, settings), runtime, calls
 
     return build
 
@@ -76,7 +82,7 @@ def test_high_risk_case_pauses_then_resumes(
     assert paused["case_status"] == "pending_approval"
     assert paused["path"][-1] == "request_approval"
 
-    resp = client.post(f"/disputes/{case_id}/approve", json={"approved": True, "approver": "ana"})
+    resp = client.post(f"/disputes/{case_id}/approve", json={"approved": True})
     assert resp.status_code == 202
     done = client.get(f"/disputes/{case_id}").json()
     assert done["workflow"] == "completed"
@@ -90,7 +96,7 @@ def test_human_rejection_escalates(make: Make, store: InMemoryStore, settings: S
     client.post("/disputes", json={"case_id": case_id})
     client.post(
         f"/disputes/{case_id}/approve",
-        json={"approved": False, "approver": "ana", "note": "amount looks wrong"},
+        json={"approved": False, "note": "amount looks wrong"},
     )
     body = client.get(f"/disputes/{case_id}").json()
     assert body["case_status"] == "escalated"
@@ -115,7 +121,7 @@ def test_unknown_case_is_404(make: Make) -> None:
     client, _, _ = make()
     assert client.post("/disputes", json={"case_id": "case_9999"}).status_code == 404
     assert client.get("/disputes/case_9999").status_code == 404
-    body = {"approved": True, "approver": "a"}
+    body = {"approved": True}
     assert client.post("/disputes/case_9999/approve", json=body).status_code == 404
 
 
@@ -123,7 +129,10 @@ def test_bad_request_bodies_are_422(make: Make) -> None:
     client, _, _ = make()
     assert client.post("/disputes", json={"case_id": "nope"}).status_code == 422
     assert client.post("/disputes", json={"case_id": "case_0001", "x": 1}).status_code == 422
-    assert client.post("/disputes/case_0001/approve", json={"approved": True}).status_code == 422
+    assert client.post("/disputes/case_0001/approve", json={}).status_code == 422
+    # the approver is the token's subject: a body that names one is refused
+    body = {"approved": True, "approver": "someone-else"}
+    assert client.post("/disputes/case_0001/approve", json=body).status_code == 422
 
 
 def test_starting_twice_is_a_conflict(make: Make, store: InMemoryStore, settings: Settings) -> None:
@@ -138,7 +147,7 @@ def test_approving_a_case_that_is_not_waiting_is_a_conflict(
 ) -> None:
     client, _, _ = make()
     case_id = open_case(store, settings, approval=False)
-    body = {"approved": True, "approver": "ana"}
+    body = {"approved": True}
     assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 409  # not started
     client.post("/disputes", json={"case_id": case_id})
     assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 409  # finished
@@ -150,7 +159,7 @@ def test_second_approval_is_a_conflict(
     client, _, _ = make()
     case_id = open_case(store, settings, approval=True)
     client.post("/disputes", json={"case_id": case_id})
-    body = {"approved": True, "approver": "ana"}
+    body = {"approved": True}
     assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 202
     assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 409
 
@@ -164,7 +173,7 @@ def test_a_crashed_run_escalates_the_case(store: InMemoryStore, settings: Settin
         store=store,
         checkpointer=InMemorySaver(),
     )
-    client = TestClient(create_app(runtime))
+    client = authed_client(runtime, settings)
     case_id = open_case(store, settings, approval=False)
     client.post("/disputes", json={"case_id": case_id})
     body = client.get(f"/disputes/{case_id}").json()
@@ -213,7 +222,7 @@ def test_a_run_that_crashes_while_resuming_is_failed_and_cannot_be_approved_agai
         store=store,
         checkpointer=InMemorySaver(),
     )
-    client = TestClient(create_app(runtime))
+    client = authed_client(runtime, settings)
     case_id = open_case(store, settings, approval=True)
     client.post("/disputes", json={"case_id": case_id})
 
@@ -225,7 +234,7 @@ def test_a_run_that_crashes_while_resuming_is_failed_and_cannot_be_approved_agai
         return original(case_id, **kwargs)  # type: ignore[arg-type]
 
     store.set_case_status = boom  # type: ignore[method-assign,assignment]
-    body = {"approved": True, "approver": "ana"}
+    body = {"approved": True}
     assert client.post(f"/disputes/{case_id}/approve", json=body).status_code == 202
 
     view = client.get(f"/disputes/{case_id}").json()

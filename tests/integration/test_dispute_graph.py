@@ -19,9 +19,15 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from tests.conftest import make_settings
-from tests.graph_helpers import StubRetriever, always_revise, fake_llm, needs_approval
+from tests.graph_helpers import (
+    TEST_JWT_SECRET,
+    StubRetriever,
+    always_revise,
+    authed_client,
+    fake_llm,
+    needs_approval,
+)
 
-from disputedesk.api.app import create_app
 from disputedesk.api.runtime import Runtime, build_runtime
 from disputedesk.config import Settings
 from disputedesk.db.models import Case, CaseStatus
@@ -54,7 +60,7 @@ def pool(database_url: str, conn: psycopg.Connection) -> Iterator[ConnectionPool
 
 @pytest.fixture
 def settings() -> Settings:
-    return make_settings()
+    return make_settings(jwt_secret=TEST_JWT_SECRET)
 
 
 @pytest.fixture
@@ -70,7 +76,7 @@ def make_client(conn: psycopg.Connection, pool: ConnectionPool, settings: Settin
             store=PostgresStore(conn),
             checkpointer=PostgresSaver(pool, serde=checkpoint_serde()),  # type: ignore[arg-type]
         )
-        return TestClient(create_app(runtime)), calls
+        return authed_client(runtime, settings), calls
 
     return make
 
@@ -212,7 +218,7 @@ def test_high_risk_case_pauses_and_resumes_after_restart(
 
     resp = second.post(
         f"/disputes/{case.case_id}/approve",
-        json={"approved": True, "approver": "ana", "note": "checked"},
+        json={"approved": True, "note": "checked"},
     )
     assert resp.status_code == 202
     done = second.get(f"/disputes/{case.case_id}").json()
@@ -237,7 +243,7 @@ def test_human_can_decline_and_the_case_escalates(
     client.post("/disputes", json={"case_id": case.case_id})
     client.post(
         f"/disputes/{case.case_id}/approve",
-        json={"approved": False, "approver": "ana", "note": "not enough evidence"},
+        json={"approved": False, "note": "not enough evidence"},
     )
     assert db_status(conn, case.case_id) == "escalated"
 
@@ -258,7 +264,7 @@ def test_five_seeded_disputes_complete_end_to_end(
         assert client.post("/disputes", json={"case_id": case.case_id}).status_code == 202
     for case in high:
         assert client.get(f"/disputes/{case.case_id}").json()["workflow"] == "awaiting_approval"
-        client.post(f"/disputes/{case.case_id}/approve", json={"approved": True, "approver": "ana"})
+        client.post(f"/disputes/{case.case_id}/approve", json={"approved": True})
     for case in [*low, *high]:
         body = client.get(f"/disputes/{case.case_id}").json()
         assert body["workflow"] == "completed"
