@@ -64,11 +64,16 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5432/disputedesk"
 
     # --- Observability ---
+    # Off by default so unit tests and CI never try to reach a collector.
+    otel_enabled: bool = False
     otel_exporter_otlp_endpoint: str = "http://localhost:4318"
     otel_service_name: str = "disputedesk"
     langfuse_host: str = "http://localhost:3000"
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None
+    # USD per million tokens, for cost per case. 0 = unpriced (fake/ollama, or not configured).
+    llm_price_input_per_mtok: float = 0.0
+    llm_price_output_per_mtok: float = 0.0
 
 
 @lru_cache

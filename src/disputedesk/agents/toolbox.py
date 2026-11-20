@@ -25,6 +25,7 @@ from mcp_types import Implementation, RequestParamsMeta
 from disputedesk.agents.resilience import CallFailedError, NonRetryableError, call_with_retry
 from disputedesk.guardrails.interface import Action, check_tool_call
 from disputedesk.mcp_servers.common.store import AuditSink
+from disputedesk.observability.otel import tool_span
 from disputedesk.security.agent_tokens import META_KEY, CredentialIssuer
 
 
@@ -63,6 +64,11 @@ class ToolBox:
 
     def call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Run an allowed tool and return its structured result."""
+        case_id = arguments.get("case_id")
+        with tool_span(tool, self.agent, case_id if isinstance(case_id, str) else None):
+            return self._call_checked(tool, arguments)
+
+    def _call_checked(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         case_id = arguments.get("case_id")
         verdict = check_tool_call(
             self.agent,

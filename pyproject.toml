@@ -15,7 +15,12 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.2.1",
     "mcp>=2.3",               # MCP Python SDK (MCPServer, formerly FastMCP) for the tool servers
     "nemoguardrails>=0.25.0",
+    "langfuse>=2.60,<3",      # Langfuse v2 server has no OTLP ingest, so the v2 SDK it is (ADR-001)
     "opentelemetry-api>=1.45.2",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.2",
+    "opentelemetry-instrumentation-fastapi>=0.66b0",
+    "opentelemetry-instrumentation-psycopg>=0.66b0",
+    "opentelemetry-sdk>=1.45.2",
     "presidio-analyzer>=2.2.366",
     "presidio-anonymizer>=2.2.366",
     "psycopg-pool>=3.3.3",
@@ -31,7 +36,6 @@ dependencies = [
 dev = [
     "httpx>=0.28.1",
     "mypy>=1.13",
-    "opentelemetry-sdk>=1.45.2",
     "pre-commit>=4.0",
     "pytest>=8.3",
     "ruff>=0.8",
@@ -64,8 +68,8 @@ plugins = ["pydantic.mypy"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["nemoguardrails", "nemoguardrails.*"]
-ignore_missing_imports = true  # NeMo ships no py.typed marker
+module = ["nemoguardrails", "nemoguardrails.*", "langfuse", "langfuse.*"]
+ignore_missing_imports = true  # NeMo and the Langfuse v2 SDK ship no py.typed marker
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

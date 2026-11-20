@@ -5,8 +5,6 @@ from decimal import Decimal
 
 import pytest
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from disputedesk.agents import allowlists
@@ -22,6 +20,7 @@ from disputedesk.guardrails.interface import (
 )
 from disputedesk.guardrails.judges import ungrounded_figures
 from disputedesk.mcp_servers.common.store import InMemoryStore
+from tests.otel_helpers import install_test_sdk
 
 CARD = "4111 1111 1111 1111"  # standard synthetic test card number
 CAP = get_settings().human_approval_threshold_cents
@@ -29,11 +28,7 @@ CAP = get_settings().human_approval_threshold_cents
 
 @pytest.fixture(scope="module")
 def spans() -> InMemorySpanExporter:
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    trace.set_tracer_provider(provider)
-    return exporter
+    return install_test_sdk()[0]
 
 
 # --- input rails ---

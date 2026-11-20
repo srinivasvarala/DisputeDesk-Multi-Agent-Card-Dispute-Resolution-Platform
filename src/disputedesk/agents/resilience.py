@@ -24,6 +24,7 @@ from disputedesk.llm import (
     LLMTruncatedError,
     Message,
 )
+from disputedesk.observability.otel import run_in_context
 from disputedesk.rag.retriever import RetrievedChunk, RetrieverError
 
 
@@ -54,7 +55,7 @@ def call_with_retry[T](
     last: BaseException | None = None
     for attempt in range(1, attempts + 1):
         pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
-        future = pool.submit(fn)
+        future = pool.submit(run_in_context(fn))  # keep the caller's trace context
         try:
             return future.result(timeout=timeout)
         except FutureTimeout:

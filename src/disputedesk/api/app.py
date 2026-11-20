@@ -34,6 +34,7 @@ from disputedesk.api.schemas import (
 )
 from disputedesk.config import Settings, get_settings
 from disputedesk.db.models import AuditEntry, AuditOutcome, CaseId
+from disputedesk.observability.otel import instrument_app, setup_telemetry
 from disputedesk.security.jwt import Principal, require_jwt_config
 from disputedesk.security.scopes import Scope
 
@@ -58,6 +59,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     """
     settings = settings or get_settings()
     require_jwt_config(settings)
+    setup_telemetry(settings)  # before any DB connection so psycopg is instrumented
 
     def audit(
         actor: str,
@@ -122,6 +124,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             yield
 
     app = FastAPI(title="DisputeDesk", version="0.1.0", lifespan=lifespan)
+    instrument_app(app)
     if runtime is not None:
         app.state.runtime = runtime
 

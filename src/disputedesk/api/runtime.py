@@ -21,6 +21,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
+from opentelemetry.trace import SpanContext, Status, StatusCode
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -48,6 +49,8 @@ from disputedesk.mcp_servers.common.store import (
 )
 from disputedesk.mcp_servers.merchant import server as merchant_server
 from disputedesk.mcp_servers.transactions import server as transactions_server
+from disputedesk.observability.langfuse import make_langfuse
+from disputedesk.observability.otel import case_span, record_case_run
 from disputedesk.rag.retriever import Retriever
 from disputedesk.security.agent_tokens import CredentialIssuer, CredentialVerifier
 
@@ -75,6 +78,9 @@ class Runtime:
     failure_tools: ToolBox  # used only to escalate a case whose workflow crashed
     _active: set[str] = field(default_factory=set)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    # Trace of each case's first run, so a resume after human approval joins the same trace.
+    # In memory: after an API restart a resume starts a new trace (known gap, see PROGRESS.md).
+    _trace_roots: dict[str, SpanContext] = field(default_factory=dict)
 
     # --- reading -------------------------------------------------------------------------
 
@@ -143,23 +149,41 @@ class Runtime:
 
     def run(self, case_id: str) -> None:
         """Run a claimed case from the start until it finishes or pauses."""
-        self._drive(case_id, DisputeState(case_id=case_id))
+        self._drive(case_id, DisputeState(case_id=case_id), "case.run")
 
     def resume(self, case_id: str, decision: ApprovalRequest, approver: str) -> None:
         """Continue a claimed, paused case with the human's decision."""
-        self._drive(case_id, Command(resume={**decision.model_dump(), "approver": approver}))
+        resume: Command[Any] = Command(resume={**decision.model_dump(), "approver": approver})
+        self._drive(case_id, resume, "case.resume")
 
     def _claim_locked(self, case_id: str) -> None:
         if case_id in self._active:
             raise WorkflowConflictError(f"case {case_id} is already being processed")
         self._active.add(case_id)
 
-    def _drive(self, case_id: str, graph_input: DisputeState | Command[Any]) -> None:
+    def _drive(
+        self, case_id: str, graph_input: DisputeState | Command[Any], span_name: str
+    ) -> None:
         try:
-            self.graph.invoke(graph_input, _config(case_id))
-        except Exception as exc:
-            logger.exception("workflow failed for %s", case_id)
-            self._fail(case_id, exc)
+            with case_span(span_name, case_id, parent=self._trace_roots.get(case_id)) as (
+                span,
+                totals,
+            ):
+                self._trace_roots.setdefault(case_id, span.get_span_context())
+                try:
+                    result = self.graph.invoke(graph_input, _config(case_id))
+                except Exception as exc:
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                    logger.exception("workflow failed for %s", case_id)
+                    self._fail(case_id, exc)
+                else:
+                    state = _as_state(result)
+                    tier = str(state.route.risk_tier) if state.route else None
+                    span.set_attribute("case.revision_loops", state.revision_count)
+                    if tier:
+                        span.set_attribute("risk_tier", tier)
+                    record_case_run(totals, state.revision_count, tier)
         finally:
             with self._lock:
                 self._active.discard(case_id)
@@ -181,6 +205,16 @@ class Runtime:
             logger.exception("could not escalate failed case %s", case_id)
 
 
+def _as_state(result: Any) -> DisputeState:
+    """`graph.invoke` returns the state as a model or a dict, depending on the LangGraph version."""
+    if isinstance(result, DisputeState):
+        return result
+    # A paused run also carries an `__interrupt__` entry that is not part of the state.
+    return DisputeState.model_validate(
+        {k: v for k, v in result.items() if k in DisputeState.model_fields}
+    )
+
+
 def _config(case_id: str) -> Any:
     return {"configurable": {"thread_id": case_id}}
 
@@ -192,6 +226,7 @@ def build_runtime(
     retriever: PolicySearch,
     store: FullStore,
     checkpointer: BaseCheckpointSaver[Any] | None,
+    langfuse: Any | None = None,
 ) -> Runtime:
     issuer = CredentialIssuer(settings)  # raises if JWT_SECRET is missing or weak
     verifier = CredentialVerifier(settings)
@@ -206,6 +241,7 @@ def build_runtime(
         retriever=retriever,
         servers=servers,
         audit=store,
+        langfuse=langfuse,
         issuer=issuer,
     )
     graph = build_graph(build_nodes(deps), checkpointer)
@@ -249,4 +285,5 @@ def open_runtime(settings: Settings | None = None) -> Iterator[Runtime]:
             retriever=retriever,
             store=PostgresStore(conn),
             checkpointer=checkpointer,
+            langfuse=make_langfuse(settings),
         )

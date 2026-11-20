@@ -24,6 +24,7 @@ from langgraph.types import interrupt
 
 from disputedesk.graph.routing import after_human, after_resolution, after_review
 from disputedesk.graph.state import DisputeState, HumanDecision
+from disputedesk.observability.otel import agent_span, set_risk_tier
 
 Update = dict[str, Any]
 
@@ -77,7 +78,14 @@ def _tracked(name: str, node: Node) -> Node:
     """Record the visit in `path` so tests and the API can show the route a case took."""
 
     def run(state: DisputeState) -> Update:
-        update = node(state)
+        tier = str(state.route.risk_tier) if state.route else None  # from checkpointed state
+        with agent_span(name, risk_tier=tier) as span:
+            update = node(state)
+            route = update.get("route")
+            if route is not None:
+                set_risk_tier(span, str(route.risk_tier))
+            if update.get("review") is not None:
+                span.set_attribute("review.verdict", str(update["review"].verdict))
         return {**update, "path": [*state.path, name]}
 
     return run

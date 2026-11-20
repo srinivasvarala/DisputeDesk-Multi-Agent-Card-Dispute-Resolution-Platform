@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
@@ -25,6 +26,7 @@ from disputedesk.graph.state import DisputeState, Verdict
 from disputedesk.graph.system_nodes import WorkflowSteps
 from disputedesk.llm import LLMClient
 from disputedesk.mcp_servers.common.store import AuditSink
+from disputedesk.observability.langfuse import TracedLLM
 from disputedesk.security.agent_tokens import CredentialIssuer
 
 
@@ -35,13 +37,18 @@ class Dependencies:
     retriever: PolicySearch
     servers: Sequence[MCPServer]  # transactions, merchant, cases
     audit: AuditSink
+    langfuse: Any | None = None  # Langfuse client, None = LLM calls only traced in OTel
     issuer: CredentialIssuer | None = None  # None: tool calls carry no credential (tests)
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
 
 
 def build_nodes(deps: Dependencies) -> Nodes:
     s = deps.settings
-    llm = ResilientLLM(deps.llm, timeout=s.llm_timeout_seconds, retries=s.llm_max_retries)
+    llm = ResilientLLM(
+        TracedLLM(deps.llm, s, deps.langfuse),
+        timeout=s.llm_timeout_seconds,
+        retries=s.llm_max_retries,
+    )
     index = tool_index(deps.servers)
 
     def box(agent: str) -> ToolBox:
