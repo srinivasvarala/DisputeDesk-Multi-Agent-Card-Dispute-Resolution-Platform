@@ -36,15 +36,27 @@ def main() -> int:
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     parser.add_argument("--count", type=int, default=5)
     parser.add_argument(
-        "--token", help="bearer JWT (role approver); default: minted from JWT_SECRET in .env"
+        "--token",
+        help="bearer JWT of the APPROVER who decides paused cases; "
+        "default: minted from JWT_SECRET in .env",
+    )
+    parser.add_argument(
+        "--starter-token",
+        help="bearer JWT of the user who STARTS cases (must be a different person from the "
+        "approver: maker-checker); default: minted from JWT_SECRET in .env",
     )
     parser.add_argument("--first", type=int, default=1, help="first case number")
     args = parser.parse_args()
 
     failures = done = 0
-    token = args.token or issue_token(get_settings(), sub="demo-approver", role=Role.APPROVER)
-    headers = {"Authorization": f"Bearer {token}"}
-    with httpx.Client(base_url=args.url, timeout=30, headers=headers) as client:
+    settings = get_settings()
+    approver = args.token or issue_token(settings, sub="demo-approver", role=Role.APPROVER)
+    starter = args.starter_token or issue_token(settings, sub="demo-starter", role=Role.ANALYST)
+    approve_headers = {"Authorization": f"Bearer {approver}"}
+    # The starter's token is the client's default; approvals name the approver's own.
+    with httpx.Client(
+        base_url=args.url, timeout=30, headers={"Authorization": f"Bearer {starter}"}
+    ) as client:
         n = args.first
         while done < args.count:
             case_id = f"case_{n:04d}"
@@ -61,6 +73,7 @@ def main() -> int:
                 client.post(
                     f"/disputes/{case_id}/approve",
                     json={"approved": True, "note": "demo"},
+                    headers=approve_headers,
                 ).raise_for_status()
                 body = wait_for(client, case_id, TERMINAL)
             failures += body["workflow"] != "completed"

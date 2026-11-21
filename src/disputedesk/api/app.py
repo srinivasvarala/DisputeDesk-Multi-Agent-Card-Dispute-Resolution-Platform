@@ -22,6 +22,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Req
 from disputedesk.api.auth import Authenticator
 from disputedesk.api.runtime import (
     CaseNotFoundError,
+    MakerCheckerError,
     Runtime,
     WorkflowConflictError,
     open_runtime,
@@ -158,7 +159,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         except Exception:
             rt().release(body.case_id)  # the run will never start; do not leave the case claimed
             raise
-        background.add_task(rt().run, body.case_id)
+        background.add_task(rt().run, body.case_id, principal.sub)
         return Accepted(case_id=body.case_id, workflow=WorkflowState.RUNNING)
 
     @app.get("/disputes")
@@ -199,17 +200,36 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         principal: Principal = Depends(auth.require(Scope.DISPUTES_APPROVE)),  # noqa: B008
     ) -> Accepted:
         try:
-            rt().claim_resume(case_id)
+            rt().claim_resume(case_id, principal.sub)
         except CaseNotFoundError:
             raise _not_found(case_id) from None
         except WorkflowConflictError as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+        except MakerCheckerError as exc:
+            try:  # a broken audit log must not turn a denial into a success: we deny anyway
+                audit(
+                    _actor(principal),
+                    "approve_dispute",
+                    case_id=case_id,
+                    arguments={"role": principal.role.value, "reason": "maker-checker"},
+                    outcome=AuditOutcome.DENIED,
+                    error="maker-checker",
+                )
+            except Exception:
+                logger.exception("could not audit a maker-checker denial")
+            raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from None
         try:
             audit(
                 _actor(principal),
                 "approve_dispute",
                 case_id=case_id,
-                arguments={"role": principal.role.value, "approved": body.approved},
+                # The note is the approver's own words (at most 1,000 characters), kept here so
+                # the decision and its reason are on one record. It is never put in a trace.
+                arguments={
+                    "role": principal.role.value,
+                    "approved": body.approved,
+                    "note": body.note,
+                },
             )
         except Exception:
             rt().release(case_id)  # the resume will never start; the case stays approvable

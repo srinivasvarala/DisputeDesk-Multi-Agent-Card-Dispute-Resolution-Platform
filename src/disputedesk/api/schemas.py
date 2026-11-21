@@ -43,6 +43,9 @@ class DisputeView(BaseModel):
     input_flag: str | None = Field(
         default=None, description="Input guardrail rail that sent the case to a human, if any"
     )
+    started_by: str | None = Field(
+        default=None, description="Who started the workflow. They cannot approve the case."
+    )
     path: list[str] = Field(default_factory=list, description="Graph nodes visited, in order")
 
 

@@ -73,6 +73,10 @@ class WorkflowConflictError(RuntimeError):
     """The request does not fit the workflow's current state (already started, not waiting...)."""
 
 
+class MakerCheckerError(PermissionError):
+    """The person who started a case tried to approve it."""
+
+
 @dataclass
 class Runtime:
     graph: Graph
@@ -120,6 +124,7 @@ class Runtime:
             review=state.review,
             revision_count=state.revision_count,
             input_flag=state.input_flag,
+            started_by=state.started_by,
             path=state.path,
         )
 
@@ -140,11 +145,19 @@ class Runtime:
                 )
             self._claim_locked(case_id)
 
-    def claim_resume(self, case_id: str) -> None:
-        """Reserve a resume. Raises CaseNotFoundError / WorkflowConflictError."""
+    def claim_resume(self, case_id: str, approver: str) -> None:
+        """Reserve a resume. Raises CaseNotFoundError, WorkflowConflictError or MakerCheckerError.
+
+        Maker-checker: whoever started the case cannot approve it. There is no exemption for
+        admins. A case with no recorded starter (started before the rule) is not blocked."""
         with self._lock:
-            if self.view(case_id).workflow != WorkflowState.AWAITING_APPROVAL:
+            view = self.view(case_id)
+            if view.workflow != WorkflowState.AWAITING_APPROVAL:
                 raise WorkflowConflictError(f"case {case_id} is not waiting for approval")
+            if view.started_by is not None and view.started_by == approver:
+                raise MakerCheckerError(
+                    "the user who started a case cannot approve it (maker-checker)"
+                )
             self._claim_locked(case_id)
 
     def release(self, case_id: str) -> None:
@@ -152,9 +165,9 @@ class Runtime:
         with self._lock:
             self._active.discard(case_id)
 
-    def run(self, case_id: str) -> None:
+    def run(self, case_id: str, started_by: str | None = None) -> None:
         """Run a claimed case from the start until it finishes or pauses."""
-        self._drive(case_id, DisputeState(case_id=case_id), "case.run")
+        self._drive(case_id, DisputeState(case_id=case_id, started_by=started_by), "case.run")
 
     def resume(self, case_id: str, decision: ApprovalRequest, approver: str) -> None:
         """Continue a claimed, paused case with the human's decision."""

@@ -101,6 +101,10 @@ class DisputeState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: str
+    # Who started the run (the API token's subject). Checkpointed with the case, so it survives a
+    # restart; the approver must be someone else (maker-checker). None: started before this
+    # field existed, or by a caller with no identity (evals, scripts).
+    started_by: str | None = Field(default=None, max_length=100)
     facts: CaseFacts | None = None
     route: Route | None = None
     evidence: Evidence | None = None

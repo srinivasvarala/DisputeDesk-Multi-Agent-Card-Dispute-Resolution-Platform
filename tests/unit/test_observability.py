@@ -174,7 +174,7 @@ def test_resume_after_approval_joins_the_same_trace(store: InMemoryStore) -> Non
     case = next(c for c in store.list_cases() if needs_approval(c, store, settings))
     runtime.claim_start(case.case_id)
     runtime.run(case.case_id)
-    runtime.claim_resume(case.case_id)
+    runtime.claim_resume(case.case_id, "approver-1")
     runtime.resume(case.case_id, ApprovalRequest(approved=True, note="ok"), "approver-1")
 
     spans = _SPANS.get_finished_spans()
@@ -191,7 +191,7 @@ def test_a_paused_and_resumed_case_adds_its_cost_up_and_records_it_once(
     case = next(c for c in store.list_cases() if needs_approval(c, store, settings))
     runtime.claim_start(case.case_id)
     runtime.run(case.case_id)
-    runtime.claim_resume(case.case_id)
+    runtime.claim_resume(case.case_id, "approver-1")
     runtime.resume(case.case_id, ApprovalRequest(approved=True, note="ok"), "approver-1")
 
     outputs = [t["output"] for t in lf.traces if t.get("output")]

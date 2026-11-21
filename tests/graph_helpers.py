@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import json
 from collections.abc import Iterable, Iterator, Sequence
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -87,7 +88,26 @@ def auth_headers(
     return {"Authorization": f"Bearer {issue_token(settings, sub=sub, role=role)}"}
 
 
+class TwoPersonClient(TestClient):
+    """Starts a case as one user and approves it as another.
+
+    Maker-checker forbids the user who started a case from approving it, so a test that runs a
+    case end to end needs two people. Calls to `/approve` that do not name their own headers use
+    `approver`; everything else uses the client's default headers (the starter).
+    """
+
+    approver: dict[str, str]
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Any:  # type: ignore[override]
+        if str(url).endswith("/approve") and kwargs.get("headers") is None:
+            kwargs["headers"] = self.approver
+        return super().request(method, url, **kwargs)
+
+
 def authed_client(runtime: Runtime, settings: Settings, **kwargs: object) -> TestClient:
-    client = TestClient(create_app(runtime, settings))
+    """A client for `sub` (default "ana", an approver). `/approve` calls go out as "bea" unless
+    the call names its own headers."""
+    client = TwoPersonClient(create_app(runtime, settings))
     client.headers.update(auth_headers(settings, **kwargs))  # type: ignore[arg-type]
+    client.approver = auth_headers(settings, sub="bea", role=Role.APPROVER)
     return client

@@ -92,8 +92,9 @@ def test_approver_decision_is_recorded_under_the_token_subject(
         for c in store.list_cases()
         if c.status == CaseStatus.OPEN and needs_approval(c, store, settings)
     )
-    client.headers.update(auth_headers(settings, sub="alice", role=Role.APPROVER))
+    client.headers.update(auth_headers(settings, sub="maya", role=Role.ANALYST))
     client.post("/disputes", json={"case_id": case_id})
+    client.headers.update(auth_headers(settings, sub="alice", role=Role.APPROVER))
     assert client.post(f"/disputes/{case_id}/approve", json={"approved": True}).status_code == 202
     reasons = [str(e.arguments.get("reason")) for e in store.audit if e.tool == "update_status"]
     assert any("alice" in r for r in reasons)
@@ -152,16 +153,18 @@ def test_start_and_approve_are_audited_under_the_caller(
         for c in store.list_cases()
         if c.status == CaseStatus.OPEN and needs_approval(c, store, settings)
     )
-    client.headers.update(auth_headers(settings, sub="alice", role=Role.APPROVER))
+    client.headers.update(auth_headers(settings, sub="maya", role=Role.ANALYST))
     client.post("/disputes", json={"case_id": case_id})
-    client.post(f"/disputes/{case_id}/approve", json={"approved": False})
+    client.headers.update(auth_headers(settings, sub="alice", role=Role.APPROVER))
+    client.post(f"/disputes/{case_id}/approve", json={"approved": False, "note": "amount is off"})
 
     api_rows = [e for e in store.audit if e.server == "api"]
     assert [(e.actor, e.tool, e.case_id) for e in api_rows] == [
-        ("user:alice", "start_dispute", case_id),
+        ("user:maya", "start_dispute", case_id),
         ("user:alice", "approve_dispute", case_id),
     ]
-    assert api_rows[1].arguments == {"role": "approver", "approved": False}
+    # The approver's own words are on the record next to the decision.
+    assert api_rows[1].arguments == {"role": "approver", "approved": False, "note": "amount is off"}
 
 
 def test_audit_endpoint_is_admin_only_and_filters_by_case(
@@ -216,10 +219,13 @@ def test_a_failed_audit_write_does_not_leave_the_case_claimed(
         if route == "start"
         else (f"/disputes/{case_id}/approve", {"approved": True})
     )
-    assert client.post(path, json=body).status_code == 500
+    # Approving as someone other than the user who started the case (maker-checker).
+    who = auth_headers(settings, sub="bea", role=Role.APPROVER) if route == "approve" else None
+    assert client.post(path, json=body, headers=who).status_code == 500
 
     broken = False
-    assert client.post(path, json=body).status_code == 202  # not 409 "already being processed"
+    # not 409 "already being processed"
+    assert client.post(path, json=body, headers=who).status_code == 202
 
 
 def test_reading_the_audit_log_is_itself_audited_and_fails_closed(
@@ -249,3 +255,66 @@ def test_case_reads_are_not_audited(
     before = len(store.audit)
     assert client.get("/disputes/case_0001").status_code == 200
     assert len(store.audit) == before
+
+
+# --- maker-checker: the user who started a case cannot approve it ---
+
+
+def _high_risk_case(store: InMemoryStore, settings: Settings) -> str:
+    return next(
+        c.case_id
+        for c in store.list_cases()
+        if c.status == CaseStatus.OPEN and needs_approval(c, store, settings)
+    )
+
+
+@pytest.mark.parametrize("role", [Role.APPROVER, Role.ADMIN])  # no exemption for admins
+def test_the_user_who_started_a_case_cannot_approve_it(
+    client: TestClient, store: InMemoryStore, settings: Settings, role: Role
+) -> None:
+    case_id = _high_risk_case(store, settings)
+    client.headers.update(auth_headers(settings, sub="maya", role=role))
+    assert client.post("/disputes", json={"case_id": case_id}).status_code == 202
+
+    resp = client.post(f"/disputes/{case_id}/approve", json={"approved": True, "note": "mine"})
+    assert resp.status_code == 403
+    assert "maker-checker" in resp.json()["detail"]
+    # Refused and recorded: a DENIED row with the reason, and no approval row.
+    rows = [e for e in store.audit if e.server == "api" and e.tool == "approve_dispute"]
+    assert [(e.actor, e.outcome, e.error) for e in rows] == [
+        ("user:maya", AuditOutcome.DENIED, "maker-checker")
+    ]
+    assert "mine" not in rows[0].model_dump_json()  # nothing was decided, so no note is kept
+    # The case is still waiting, and someone else can decide it.
+    assert client.get(f"/disputes/{case_id}").json()["workflow"] == "awaiting_approval"
+    client.headers.update(auth_headers(settings, sub="bea", role=Role.APPROVER))
+    assert client.post(f"/disputes/{case_id}/approve", json={"approved": True}).status_code == 202
+    assert client.get(f"/disputes/{case_id}").json()["workflow"] == "completed"
+
+
+def test_the_case_shows_who_started_it(
+    client: TestClient, store: InMemoryStore, settings: Settings
+) -> None:
+    case_id = _high_risk_case(store, settings)
+    client.headers.update(auth_headers(settings, sub="maya", role=Role.APPROVER))
+    client.post("/disputes", json={"case_id": case_id})
+    assert client.get(f"/disputes/{case_id}").json()["started_by"] == "maya"
+
+
+def test_a_case_with_no_recorded_starter_is_not_blocked(
+    store: InMemoryStore, settings: Settings
+) -> None:
+    """A run begun by a caller with no identity (an eval, a script, a case from before the rule)
+    has no starter on record. It must stay approvable rather than be stranded."""
+    llm, _ = fake_llm()
+    runtime = build_runtime(
+        settings=settings,
+        llm=llm,
+        retriever=StubRetriever(),
+        store=store,
+        checkpointer=InMemorySaver(),
+    )
+    case_id = _high_risk_case(store, settings)
+    runtime.claim_start(case_id)
+    runtime.run(case_id)  # no started_by
+    runtime.claim_resume(case_id, "anyone")  # does not raise

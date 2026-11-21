@@ -23,6 +23,7 @@ from tests.graph_helpers import (
     TEST_JWT_SECRET,
     StubRetriever,
     always_revise,
+    auth_headers,
     authed_client,
     fake_llm,
     needs_approval,
@@ -34,6 +35,7 @@ from disputedesk.db.models import Case, CaseStatus
 from disputedesk.db.seed import generate
 from disputedesk.graph.serde import checkpoint_serde
 from disputedesk.mcp_servers.common.store import InMemoryStore, PostgresStore
+from disputedesk.security.scopes import Role
 
 pytestmark = pytest.mark.integration
 
@@ -216,6 +218,15 @@ def test_high_risk_case_pauses_and_resumes_after_restart(
     second, calls = make_client()
     seen = second.get(f"/disputes/{case.case_id}").json()
     assert seen["workflow"] == "awaiting_approval"
+    assert seen["started_by"] == "ana"  # the starter is in the checkpoint, so it survives
+
+    # Maker-checker still holds after the restart: the starter ("ana") cannot approve.
+    own = second.post(
+        f"/disputes/{case.case_id}/approve",
+        json={"approved": True},
+        headers=auth_headers(settings, sub="ana", role=Role.APPROVER),
+    )
+    assert own.status_code == 403
 
     resp = second.post(
         f"/disputes/{case.case_id}/approve",
@@ -233,7 +244,7 @@ def test_high_risk_case_pauses_and_resumes_after_restart(
         (case.case_id,),
     ).fetchone()
     assert reason is not None
-    assert "ana" in reason[0]
+    assert "bea" in reason[0]  # the approver, not the user who started the case
 
 
 def test_human_can_decline_and_the_case_escalates(
