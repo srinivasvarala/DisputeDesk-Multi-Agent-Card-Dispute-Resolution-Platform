@@ -158,6 +158,10 @@ class Case(Record):
     fraud_declaration_signed: bool | None = None
     card_reissued: bool | None = None
     card_reported_lost_at: UtcDatetime | None = None
+    # Not-as-described filing items (rulebook 07). None = not recorded.
+    merchant_contacted_at: UtcDatetime | None = None  # starts the 15-day wait
+    return_tracking_provided: bool | None = None  # carrier tracking for the returned goods
+    merchant_refused_return: bool | None = None  # refused, or gave no return address: a waiver
 
 
 class CaseDraft(Record):

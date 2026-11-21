@@ -36,6 +36,10 @@ class CaseFacts(Model):
     fraud_declaration_signed: bool | None = None
     card_reissued: bool | None = None
     card_reported_lost_at: datetime | None = None
+    # Not-as-described filing items (rulebook 07). None = not recorded.
+    merchant_contacted_at: datetime | None = None
+    return_tracking_provided: bool | None = None
+    merchant_refused_return: bool | None = None
 
 
 class Route(Model):

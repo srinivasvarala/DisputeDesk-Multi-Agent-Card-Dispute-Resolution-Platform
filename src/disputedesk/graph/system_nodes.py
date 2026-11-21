@@ -58,6 +58,9 @@ class WorkflowSteps:
             fraud_declaration_signed=case.get("fraud_declaration_signed"),
             card_reissued=case.get("card_reissued"),
             card_reported_lost_at=case.get("card_reported_lost_at"),
+            merchant_contacted_at=case.get("merchant_contacted_at"),
+            return_tracking_provided=case.get("return_tracking_provided"),
+            merchant_refused_return=case.get("merchant_refused_return"),
         )
         if verdict.action == Action.BLOCK:
             return {"facts": facts, "input_flag": verdict.rail or "input guardrail"}

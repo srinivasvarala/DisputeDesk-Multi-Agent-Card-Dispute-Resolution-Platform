@@ -130,6 +130,10 @@ class GoldenCase(Model):
     card_reported_lost_hours_before_txn: float | None = Field(
         default=None, description="None = the card was not reported lost or stolen"
     )
+    # Not-as-described filing items, as the case record would hold them. None = not recorded.
+    merchant_contacted_days_before_filing: int | None = Field(default=None, ge=0)
+    return_tracking_provided: bool | None = None
+    merchant_refused_return: bool | None = None
     claimed_reason: ReasonCode
     narrative: str
     expected: Expected
@@ -314,6 +318,13 @@ def build_world(cases: list[GoldenCase], now: datetime) -> World:
                     if c.card_reported_lost_hours_before_txn is not None
                     else None
                 ),
+                merchant_contacted_at=(
+                    now - timedelta(days=1 + c.merchant_contacted_days_before_filing)
+                    if c.merchant_contacted_days_before_filing is not None
+                    else None
+                ),
+                return_tracking_provided=c.return_tracking_provided,
+                merchant_refused_return=c.merchant_refused_return,
             )
         )
         for p in range(c.prior_disputes):  # earlier, unrelated disputes by the same customer

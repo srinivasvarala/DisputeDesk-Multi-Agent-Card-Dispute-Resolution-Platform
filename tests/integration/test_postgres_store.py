@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -256,3 +256,24 @@ def test_read_audit_returns_newest_first_and_filters_by_case(
     rows = [r for r in pg.read_audit(case_id="case_0003", limit=50) if r.actor == tag]
     assert [r.tool for r in rows] == ["c", "b", "a"]  # newest first
     assert len(pg.read_audit(limit=2)) == 2
+
+
+def test_not_as_described_filing_items_round_trip(
+    pg: PostgresStore, conn: psycopg.Connection
+) -> None:
+    """The three new columns are read back as the Case model's fields; NULL means not recorded."""
+    case_id = pg.list_cases()[0].case_id
+    assert pg.get_case(case_id).merchant_contacted_at is None  # type: ignore[union-attr]
+    when = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+
+    conn.execute(
+        "UPDATE cases SET merchant_contacted_at = %s, return_tracking_provided = true,"
+        " merchant_refused_return = false WHERE case_id = %s",
+        (when, case_id),
+    )
+    case = pg.get_case(case_id)
+
+    assert case is not None
+    assert case.merchant_contacted_at == when
+    assert case.return_tracking_provided is True
+    assert case.merchant_refused_return is False

@@ -23,7 +23,7 @@ from disputedesk.agents.common import (
 )
 from disputedesk.agents.policy import PolicyAnswer
 from disputedesk.agents.toolbox import ToolBox
-from disputedesk.db.models import AuditOutcome, CaseDraft, Decision
+from disputedesk.db.models import AuditOutcome, CaseDraft, Decision, ReasonCode
 from disputedesk.graph import rules
 from disputedesk.graph.state import CaseFacts, Evidence, ResolutionDraft, Review, Route
 from disputedesk.llm import LLMClient
@@ -49,7 +49,13 @@ and lower your confidence if the gap matters. System records (carrier data, term
 mode) outweigh the cardholder's narrative.
 - Timing is computed for you from the rulebook's time limits: `expected_delivery_date` (30 \
 days after settlement when none was promised), `waiting_period_elapsed`, \
-`within_filing_window`. Trust them; do not escalate over timing they already settle.
+`within_filing_window`, and for not-as-described disputes `merchant_wait_elapsed` (15 days \
+since the cardholder contacted the merchant). Trust them; do not escalate over timing they \
+already settle.
+- For not-as-described disputes the case record shows `return_tracking_provided` and \
+`merchant_refused_return`. The policy answer says when the contact wait and the return \
+requirement apply or are waived (a merchant's refusal, or a counterfeit item that must not be \
+returned); apply it with these facts.
 - `carrier_approved` false means the tracking must be confirmed with the carrier before it \
 proves delivery. `delivery_address_matches` false means delivery is not proven (rulebook 04). \
 For an order above $250.00 delivery also needs `signature_confirmed` true.
@@ -202,11 +208,19 @@ def filing_attributes(facts: CaseFacts, route: Route, evidence: Evidence) -> str
         attrs["card_reported_lost_before_charge"] = (
             facts.card_reported_lost_at < evidence.transaction.posted_at
         )
+    if route.reason_code == ReasonCode.NOT_AS_DESCRIBED:
+        attrs["return_tracking_provided"] = facts.return_tracking_provided
+        attrs["merchant_refused_return"] = facts.merchant_refused_return
+        if facts.merchant_contacted_at is not None:
+            attrs["merchant_contacted_at"] = facts.merchant_contacted_at.isoformat()
     if facts.filed_at is not None:
         attrs["filed_at"] = facts.filed_at.isoformat()
         attrs.update(
             rules.filing_timing(
-                route.reason_code, posted_at=evidence.transaction.posted_at, filed_at=facts.filed_at
+                route.reason_code,
+                posted_at=evidence.transaction.posted_at,
+                filed_at=facts.filed_at,
+                merchant_contacted_at=facts.merchant_contacted_at,
             )
         )
     return "".join(

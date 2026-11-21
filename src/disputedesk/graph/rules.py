@@ -51,11 +51,16 @@ def escalation_override(*, confidence: float, disputes_90d: int) -> str | None:
 DEFAULT_DELIVERY_DAYS = 30  # expected delivery = settlement + 30 days when none was promised
 R20_WAIT_DAYS = 15
 FILING_WINDOW_DAYS = 120
+MERCHANT_WAIT_DAYS = 15  # not-as-described: days to wait after contacting the merchant (07)
 
 
 def filing_timing(
-    reason: ReasonCode, *, posted_at: datetime, filed_at: datetime
-) -> dict[str, str | bool]:
+    reason: ReasonCode,
+    *,
+    posted_at: datetime,
+    filed_at: datetime,
+    merchant_contacted_at: datetime | None = None,
+) -> dict[str, str | bool | int]:
     """Timing facts for a filing, as the rulebook defines them. Empty for reasons whose clock
     starts at an event this module cannot see (for example a delivery that is not recorded)."""
     if reason == ReasonCode.NOT_RECEIVED:
@@ -67,4 +72,14 @@ def filing_timing(
         }
     if reason in (ReasonCode.FRAUD, ReasonCode.DUPLICATE):
         return {"within_filing_window": filed_at <= posted_at + timedelta(days=FILING_WINDOW_DAYS)}
+    if reason == ReasonCode.NOT_AS_DESCRIBED:
+        timing: dict[str, str | bool | int] = {
+            "within_filing_window": filed_at <= posted_at + timedelta(days=FILING_WINDOW_DAYS)
+        }
+        if merchant_contacted_at is not None:
+            timing["days_since_merchant_contact"] = (filed_at - merchant_contacted_at).days
+            timing["merchant_wait_elapsed"] = filed_at >= merchant_contacted_at + timedelta(
+                days=MERCHANT_WAIT_DAYS
+            )
+        return timing
     return {}

@@ -108,3 +108,6 @@ ALTER TABLE shipments ADD COLUMN IF NOT EXISTS signature_confirmed BOOLEAN;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS fraud_declaration_signed BOOLEAN;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS card_reissued BOOLEAN;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS card_reported_lost_at TIMESTAMPTZ;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS merchant_contacted_at TIMESTAMPTZ;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS return_tracking_provided BOOLEAN;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS merchant_refused_return BOOLEAN;
