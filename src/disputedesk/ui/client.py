@@ -31,8 +31,10 @@ class ReviewerClient:
         self._token = token if callable(token) else (lambda: token)
         self._http = httpx.Client(base_url=base_url, timeout=15, transport=transport)
 
-    def list_cases(self, status: CaseStatus | None = None) -> list[CaseSummary]:
-        params = {"case_status": status.value} if status else {}
+    def list_cases(self, status: CaseStatus | None = None, limit: int = 500) -> list[CaseSummary]:
+        params: dict[str, str | int] = {"limit": limit}
+        if status:
+            params["case_status"] = status.value
         return _CASES.validate_python(self._call("GET", "/disputes", params=params))
 
     def get_case(self, case_id: str) -> DisputeView:

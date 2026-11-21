@@ -3,7 +3,7 @@
 # One-time setup: .env (with a generated JWT secret), infra, dependencies, seed data, policy index.
 setup:
 	@test -f .env || cp .env.example .env
-	@grep -q '^JWT_SECRET=.\{32,\}' .env || perl -pi -e "s/^JWT_SECRET=.*/JWT_SECRET=$$(openssl rand -hex 32)/" .env
+	@./scripts/ensure_jwt_secret.sh
 	docker compose up -d --wait
 	uv sync --all-extras --dev --group ui
 	$(MAKE) seed

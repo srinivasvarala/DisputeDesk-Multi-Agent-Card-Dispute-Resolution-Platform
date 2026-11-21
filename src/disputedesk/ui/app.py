@@ -122,7 +122,7 @@ def render_actions(client: ReviewerClient, view: DisputeView) -> None:
         with st.container(border=True):
             st.markdown("##### Your decision")
             st.warning("Policy requires a human to approve this case before it is resolved.")
-            note = st.text_input("Note (optional)", max_chars=1_000)
+            note = st.text_input("Note (optional)", max_chars=1_000, key=f"note-{view.case_id}")
             approve, reject, _ = st.columns([1, 1, 3])
             if approve.button("Approve", type="primary", use_container_width=True):
                 client.decide(view.case_id, approved=True, note=note)
@@ -138,13 +138,29 @@ def render_actions(client: ReviewerClient, view: DisputeView) -> None:
         st.success("Resolved.")
 
 
-def render_case(client: ReviewerClient, case_id: str, summary: CaseSummary | None) -> None:
-    view = client.get_case(case_id)
-    render_header(view, summary)
-    if view.workflow is not WorkflowState.NOT_STARTED:
-        render_trace(view)
-        render_draft(view)
-    render_actions(client, view)
+def render_case(
+    client: ReviewerClient,
+    case_id: str,
+    summary: CaseSummary | None,
+    first: dict[str, DisputeView],
+) -> None:
+    """Runs on a full page run and again on every fragment rerun (poll tick or button click).
+
+    Fragment reruns skip the module-level error handler in `main`, so API errors are caught here.
+    `first` holds the view `render_live` already fetched; it is used once, so a poll tick or a
+    click fetches fresh state.
+    """
+    try:
+        view = first.pop("view", None) or client.get_case(case_id)
+        render_header(view, summary)
+        if view.workflow is not WorkflowState.NOT_STARTED:
+            render_trace(view)
+            render_draft(view)
+        render_actions(client, view)
+    except ApiError as exc:
+        st.error(str(exc))
+        st.caption("Press Refresh queue in the sidebar to reload.")
+        return
     if view.workflow is WorkflowState.RUNNING:
         st.session_state["was_running"] = case_id
     elif st.session_state.pop("was_running", None) == case_id:
@@ -153,9 +169,10 @@ def render_case(client: ReviewerClient, case_id: str, summary: CaseSummary | Non
 
 def render_live(client: ReviewerClient, case_id: str, summary: CaseSummary | None) -> None:
     """Poll while the workflow runs, so nobody has to press refresh."""
-    running = client.get_case(case_id).workflow is WorkflowState.RUNNING
+    view = client.get_case(case_id)  # one fetch decides the polling and feeds the first render
+    running = view.workflow is WorkflowState.RUNNING
     panel = st.fragment(run_every=POLL_SECONDS if running else None)(render_case)
-    panel(client, case_id, summary)
+    panel(client, case_id, summary, {"view": view})
 
 
 def row_label(case_id: str, by_id: dict[str, CaseSummary]) -> str:
@@ -177,10 +194,9 @@ def sidebar(client: ReviewerClient) -> tuple[str | None, dict[str, CaseSummary]]
             format_func=lambda s: pretty(s.value),
             on_change=lambda: st.session_state.pop("keep", None),
         )
-        cases = client.list_cases(choice)
-        by_id = {c.case_id: c for c in client.list_cases()}  # all statuses, for labels
-        st.caption(f"{len(cases)} case(s)")
-        ids = [c.case_id for c in cases]
+        by_id = {c.case_id: c for c in client.list_cases()}  # one call: queue and labels
+        ids = [c.case_id for c in by_id.values() if c.case_status is choice]
+        st.caption(f"{len(ids)} case(s)")
         keep = st.session_state.get("keep")
         if keep and keep not in ids:
             ids.insert(0, keep)  # keep the case we just acted on in view

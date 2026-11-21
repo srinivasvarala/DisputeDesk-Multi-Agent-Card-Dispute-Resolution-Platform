@@ -101,3 +101,16 @@ def test_a_token_factory_is_called_for_every_request() -> None:
     client.list_cases()
 
     assert seen == ["Bearer first", "Bearer second"]
+
+
+def test_list_cases_asks_for_a_large_page() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=[])
+
+    client_for(httpx.MockTransport(handle)).list_cases()
+
+    assert seen[0].url.params["limit"] == "500"
+    assert "case_status" not in seen[0].url.params

@@ -497,9 +497,12 @@ Six findings; three fixed in `fix(agents)`: (1) an empty `EVAL_JUDGE_MODEL` / `E
 - The list endpoint returns case status only, not workflow state (that needs a checkpoint read per case); the detail view has it.
 - Added a Makefile because the blueprint's `make seed` did not exist.
 
+### Code review follow-ups (fixed)
+API errors during a poll tick or a button click were not caught (fragment reruns skip the page-level handler); the case was fetched twice per run and the case list twice per page load; a note typed for one case could be sent against another; `make setup` skipped the JWT secret when `.env` had no `JWT_SECRET` line (now `scripts/ensure_jwt_secret.sh`). The UI also mints a fresh token per request (the cached one expired after 60 minutes). Streamlit page tests (`tests/unit/test_ui_app.py`) skip where the `ui` group is not installed, so CI does not run them.
+
 ### Known gaps
 - `make setup` from a clean clone not run. No demo GIF saved (13 frames were recorded in the browser but not exported).
 - The approval note is sent to the API but not stored in the audit row (only role and approved are); the UI label no longer claims it is.
 - With the real model, high-risk cases tend to escalate before the human gate (2 of 2 tried), consistent with the eval results.
-- The list is unpaginated beyond `limit`; no auto-refresh while a case runs (a Refresh button instead).
+- `GET /disputes` loads all cases and filters by status and limit in Python (fine at 40 cases; push the filter into the store for more). The UI asks for up to 500 cases per page load and has no pagination.
 - The 60 s `llm_timeout_seconds` against `DEFAULT_MAX_TOKENS` 8192 flagged in the M7.3 review is still open.
