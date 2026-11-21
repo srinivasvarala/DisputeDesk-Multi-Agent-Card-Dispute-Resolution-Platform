@@ -31,7 +31,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.12
-      - run: uv sync --all-extras --dev
+      # evals and ui groups: mypy and the page tests need deepeval and streamlit importable
+      - run: uv sync --all-extras --dev --group evals --group ui
       - name: Cache RAG model weights (fastembed)
         uses: actions/cache@v4
         with:
