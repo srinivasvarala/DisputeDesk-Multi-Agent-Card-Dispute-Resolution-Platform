@@ -275,3 +275,11 @@ def test_archiving_with_nothing_to_keep_is_a_no_op(tmp_path: Path) -> None:
     archive_previous(tmp_path)
 
     assert not (tmp_path / "history").exists()
+
+
+def test_a_blocked_case_is_not_listed_as_a_missed_reason_code() -> None:
+    a01 = BY_ID["a01"]
+
+    misses = expectation_misses([a01], {"a01": blocked(a01)})
+
+    assert misses == []  # resisted: it never reached the router, so there is no reason to miss

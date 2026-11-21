@@ -26,6 +26,12 @@ and PII redaction. The project rule is that all of them are called through one p
 - `LLMRails` is deprecated in NeMo 0.25; we pass `use_iorails=False` because the replacement engine only supports
   catalogued rails, not custom Colang flows. Revisit on upgrade.
 - The regex heuristics are a baseline: they catch 3 of 9 attacks in the evals.
-- **Only `check_tool_call` is wired into the graph.** `check_input` and `check_output` are built and tested
-  but not yet called at intake and finalize, so the guardrail catch rate (0.333) fails its threshold. Wiring
-  them in is the first item under "what I'd do next".
+- **`check_tool_call` and (since M7.4) `check_input` are wired into the graph.** The input check runs at
+  intake: a block escalates the case to a human with no agent call, a redaction means agents only see the
+  clean text. `check_output` is built and tested but not yet called at finalize.
+- The first input detectors caught 3 of 9 eval attacks. They were rebuilt as generic patterns grouped by what
+  the attacker is trying to do, tuned on a separate held-out dev set, with the LLM judge as an opt-in second
+  opinion (`GUARDRAIL_JUDGE`; asked about manipulation only, never about topic; fails closed). The judge's
+  token budget matters: a 64-token cap would truncate every Haiku reply and fail closed on everything.
+- Because a rail that stops attacks hides whether the layers below it hold, the evals also run the adversarial
+  cases with the input rail off.

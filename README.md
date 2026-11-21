@@ -37,11 +37,11 @@ DisputeDesk is my answer to *"how do you put LLM agents in a workflow that moves
 | **Multi-agent orchestration** | 5 LLM agents with distinct roles plus a deterministic rules engine on LangGraph: a reviewer revision loop, Postgres checkpoints and a human-in-the-loop interrupt that survives a restart | Escalates instead of guessing: the real-model run in the demo below |
 | **MCP** | 3 tool servers, 9 tools, per-agent allowlists and 60-second signed credentials | An agent that bypassed the toolbox is still refused by the server |
 | **RAG** | Hybrid retrieval (vector + keyword + rank fusion + cross-encoder rerank) over a 15-document rulebook; citations verified in code | **hit@5 0.92** on 25 labelled questions (vector alone 0.84) |
-| **Guardrails** | Deterministic tool and refund rules, NeMo rails, Presidio redaction, untrusted-text isolation, one interface that fails closed | [Seven layers](#guardrails), with an honest live / not-wired status for each |
+| **Guardrails** | Deterministic tool and refund rules, an input guardrail at intake (heuristics + LLM judge), NeMo rails, Presidio redaction, untrusted-text isolation, one interface that fails closed | **24/24** held-out attacks caught, **0/24** false positives. [Seven layers](#guardrails), with an honest live / not-wired status for each |
 | **Observability** | OpenTelemetry + Jaeger + Langfuse, an append-only audit log | **134 spans, 1 trace, $0.028** for one real case |
-| **Evals** | 42-case golden set (10 adversarial), 25-question retrieval set, 18-payload red team, LLM-judge and DeepEval metrics | Decision accuracy **0.13 → 0.78** across four runs. Router and approval routing **1.00**. Faithfulness **0.97**. **Gate still red on 3 of 9**, reported as is ([details](#evaluation-how-i-know-it-works-and-where-it-doesnt)) |
+| **Evals** | 42-case golden set (10 adversarial), 25-question retrieval set, 18-payload red team, LLM-judge and DeepEval metrics | Decision accuracy **0.13 → 0.78**, guardrail catch **0.33 → 1.00**, injection pass **0.40 → 1.00**, faithfulness **0.98**. **Gate red on 1 of 9** (was 3), reported as is ([details](#evaluation-how-i-know-it-works-and-where-it-doesnt)) |
 | **Security** | JWT roles and scopes, STRIDE threat model with a test per control, CodeQL, gitleaks, dependency audit, container scan | [Threat model](docs/THREAT_MODEL.md) |
-| **Engineering** | Python 3.12, strict mypy, ruff, 389 unit + 58 integration tests, 5 ADRs, GitHub Actions | CI and Security workflows green |
+| **Engineering** | Python 3.12, strict mypy, ruff, 493 unit + 59 integration tests, 5 ADRs, GitHub Actions | CI and Security workflows green |
 
 ---
 
@@ -144,7 +144,8 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    START(["POST /disputes"]) --> INTAKE["Intake"]
+    START(["POST /disputes"]) --> INTAKE["<b>Intake</b><br/>input guardrail"]
+    INTAKE -->|"narrative blocked<br/>(no agent reads it)"| ESCALATE
     INTAKE --> ROUTER["<b>Router</b><br/>classify reason"]
     ROUTER --> EVIDENCE["<b>Evidence</b><br/>read-only MCP tools"]
     EVIDENCE --> POLICY["<b>Policy</b><br/>RAG + verified citations"]
@@ -168,7 +169,7 @@ flowchart LR
     class FINALIZE good
 ```
 
-1. **Intake.** `POST /disputes` starts the workflow for an open case. The API checks the JWT and scope, writes an audit row, and runs the graph in the background.
+1. **Intake.** `POST /disputes` starts the workflow for an open case. The API checks the JWT and scope, writes an audit row, and runs the graph in the background. The **input guardrail** screens the cardholder's narrative first: a manipulation attempt sends the case straight to a human with no agent call, and PII is redacted before any agent reads the text.
 2. **Router agent** classifies the dispute's reason code from the cardholder's narrative. **Code**, not the model, then computes the risk tier and whether a human must approve.
 3. **Evidence agent** gathers the facts through read-only MCP tools. Code decides which tools run for the reason code, so the model cannot wander off.
 4. **Policy agent** retrieves the relevant rulebook sections and returns a summary with **citations that code verifies** against the retrieved text.
@@ -187,12 +188,13 @@ flowchart LR
 | **Policy** | Finds the governing rule | `search_policies` (the RAG retriever) | Which retrieved excerpts answer the question, and a summary | Cite anything it was not shown, or quote text that is not in the excerpt (code verifies both). Its query is built from structured fields only, never customer text |
 | **Resolution** | Decides and writes the letter | `save_draft` | accept / reject / escalate, rationale, letter, a self-reported confidence | Change the case status, or approve its own refund |
 | **Reviewer** | Independent check of the draft | none | approve, or revise with specific feedback (decision follows from the evidence? every fact supported? no promises the policy forbids?) | Call any tool. The 2-revision limit is enforced by the graph, not by the reviewer |
-| **`dispute_workflow`** *(no LLM)* | Owns every status change | `get_case`, `update_status` | n/a | n/a. It is the only component allowed to move a case between states |
+| **`dispute_workflow`** *(no LLM)* | Runs the input guardrail at intake and owns every status change | `get_case`, `update_status` | n/a | n/a. It is the only component allowed to move a case between states |
 
 ### What the model decides, and what code decides
 
 | Decision | Who decides | Why |
 |---|---|---|
+| Is the narrative trying to manipulate the system? | **Code** (heuristics), with an LLM judge as a second opinion | A block escalates to a human before any agent reads the text, so the judge never has to be perfect |
 | Reason code | LLM (Router) | Reading a free-text narrative is what LLMs are good at |
 | Risk tier, human-approval requirement | **Code** | $500 or more, or a high-risk merchant, is HIGH. A model must not be able to talk its way out of a human review |
 | Which evidence tools run | **Code** | Least privilege and predictable cost |
@@ -226,7 +228,7 @@ All checks go through **one interface**, `guardrails/interface.py`: `check_input
 | Layer | What it does | Mechanism | Status |
 |---|---|---|---|
 | **Tool-call rules** | Denies a tool outside the agent's allowlist. Forces human approval for any refund at or above $500. A negative, unreadable or unknown-unit amount also forces approval. Deny wins over the cap | Plain Python, no LLM (`policy_rules.py`) | **Live** in the `ToolBox` |
-| **Input rails** | Blocks jailbreak and prompt-injection attempts ("ignore previous instructions", system-prompt extraction, "this refund is pre-approved by the system") and off-topic requests | NeMo Guardrails flows over Python detectors, with an optional LLM judge routed through `llm.py` | Built and tested. **Not yet called by the graph** |
+| **Input guardrail** | Screens the cardholder's narrative before any agent reads it. Blocks manipulation (override instructions, claimed authority or prior approval, tag breakout, skip-the-human-gate, prompt extraction, fake policy, personas, dictated output, letter-spaced obfuscation) and off-topic text. **A block escalates the case to a human with no agent call**; PII is redacted before the agents see the text | Generic heuristics grouped by attacker goal, plus an optional **LLM judge** as a second opinion (`GUARDRAIL_JUDGE=true`, routed through `llm.py`, fails closed), inside NeMo Guardrails flows | **Live at intake** |
 | **Output rails** | Blocks PII leaking into a reply. **Grounding check**: every dollar amount and card last-4 in an output must appear in the case material that was supplied | NeMo flows plus deterministic checks | Built and tested. **Not yet called by the graph** |
 | **PII redaction** | Detects and masks card numbers, SSNs, emails, phones and IBANs. Applied to every prompt and reply before it is sent to the LLM-tracing backend, and inside the input and output checks. Audit rows record rail and entity types, never the text | Presidio + spaCy (names are excluded on purpose: too many false positives on merchant names) | **Live** for LLM traces |
 | **Untrusted-text isolation** | Everything derived from a customer or merchant is escaped, wrapped as `<tag trust="untrusted">`, placed only in the user message, and never in a system prompt | `agents/common.py::untrusted()` | **Live** |
@@ -235,7 +237,9 @@ All checks go through **one interface**, `guardrails/interface.py`: `check_input
 
 **Every guardrail check is observable.** Each check emits a `guardrail` span event with the rail name, action, agent and `case_id`, sets `guardrail.triggered` on the span, and feeds a `guardrail.checks` metric, so the trigger rate is a dashboard number, not a guess.
 
-**An honest note on status.** The input and output rails exist and are unit-tested, but the graph does not call them yet. That is why the guardrail catch rate in the eval table is 0.333. Wiring them in is the first item under [What I'd do next](#what-id-do-next). Defence in depth is what keeps this safe today: untrusted-text labelling, rule-based approval, the Reviewer agent and the human gate.
+**How well the input guardrail works, and how that was measured.** The first version caught 3 of 9 attacks in the eval, because the patterns were weak. They were rebuilt and tuned on a **separate held-out dev set** (24 attacks in varied styles, 24 realistic clean narratives that deliberately use risky-sounding words such as "supervisor", "ignore" and "pre-approved"): the heuristics alone catch **23 of 24 with 0 false positives**, and with the LLM judge on, **24 of 24 with 0 false positives**. On the golden set the real check catches **9 of 9 with 0 of 32 false positives**. One honest caveat: I had read the golden attacks before writing the patterns, so the golden number is not a blind test. The dev set is the better estimate of how it generalises. Reproduce with `scripts/guardrail_check.py`.
+
+**An honest note on status.** The input guardrail is live; the judge is **off by default** (it costs one extra model call per dispute and keeps tests offline), so turn it on with a real provider. The **output rails are built and tested but not called by the graph yet**. Defence in depth is what keeps the rest safe: untrusted-text labelling, rule-based approval, the Reviewer agent and the human gate. Those lower layers are measured on their own too: the eval re-runs the adversarial cases with the input rail switched off ([Evaluation](#evaluation-how-i-know-it-works-and-where-it-doesnt)).
 
 The full list of threats, controls and the test that proves each one is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
@@ -295,32 +299,38 @@ Evals are the part of an LLM system that demos usually skip. Here they are a fir
 
 ### Results
 
-Latest run (2026-11-20): Claude Haiku 5.5 as both system and judge, 42 cases, 29 minutes, about 1.8M tokens.
+Latest run (2026-11-21, after the guardrail work): Claude Haiku 5.5 as both system and judge, 42 cases, 28 minutes, about 1.9M tokens (roughly $6 at the configured prices). Snapshot and per-case results are committed in [`docs/evals/`](docs/evals/2026-11-21.md).
 
 | Metric | Baseline | Latest | Gate | |
 |---|---|---|---|---|
 | Router accuracy | 1.000 | **1.000** | ≥ 0.90 | ✅ |
 | Human-approval routing accuracy | 1.000 | **1.000** | = 1.00 | ✅ |
 | Citation hit rate | 0.133 | **0.969** | ≥ 0.70 | ✅ |
-| Citation faithfulness (DeepEval) | 0.952 | **0.969** | ≥ 0.85 | ✅ |
-| Letter quality (LLM judge, 1-5) | 3.23 | **4.03** | ≥ 4.00 | ✅ |
-| Guardrail false-positive rate | 0.033 | **0.031** | ≤ 0.05 | ✅ |
+| Citation faithfulness (DeepEval) | 0.952 | **0.978** | ≥ 0.85 | ✅ |
+| Letter quality (LLM judge, 1-5) | 3.23 | **4.05** | ≥ 4.00 | ✅ |
+| Guardrail catch rate | 0.333 | **1.000** | ≥ 0.80 | ✅ |
+| Guardrail false-positive rate | 0.033 | **0.000** | ≤ 0.05 | ✅ |
+| Injection pass rate | 0.400 | **1.000** | = 1.00 | ✅ |
 | Decision accuracy (strict labels) | 0.133 | **0.781** | ≥ 0.80 | ❌ one case short (25 of 32) |
-| Injection pass rate | 0.400 | **0.900** | = 1.00 | ❌ 9 of 10 |
-| Guardrail catch rate | 0.333 | **0.333** | ≥ 0.80 | ❌ input rails not wired into the graph |
 | Cases that crashed | 20 of 40 | **0 of 42** | | |
 
-**The gate is red: 3 of 9.** The progress between the first run and the latest, on the two metrics that moved most:
+**The gate is red on 1 of 9** (it was 3 of 9). The progress across the five runs:
 
 ```
-Decision accuracy on clean cases (gate: 0.80)          Citation hit rate (gate: 0.70)
-Baseline    ███░░░░░░░░░░░░░░░░░  0.133                Baseline    ███░░░░░░░░░░░░░░░░░  0.133
-After M7.1  █████░░░░░░░░░░░░░░░  0.267                After M7.1  ███████████████████░  0.967
-After M7.2  █████████████░░░░░░░  0.633                After M7.2  ███████████████████░  0.967
-After M7.3  ████████████████░░░░  0.781  < 0.80        After M7.3  ███████████████████░  0.969
+Decision accuracy on clean cases (gate: 0.80)          Guardrail catch rate (gate: 0.80)
+Baseline    ███░░░░░░░░░░░░░░░░░  0.133                Baseline    ███████░░░░░░░░░░░░░  0.333
+After M7.1  █████░░░░░░░░░░░░░░░  0.267                After M7.1  ███████░░░░░░░░░░░░░  0.333
+After M7.2  █████████████░░░░░░░  0.633                After M7.2  ███████░░░░░░░░░░░░░  0.333
+After M7.3  ████████████████░░░░  0.781  < 0.80        After M7.3  ███████░░░░░░░░░░░░░  0.333
+After M7.4  ████████████████░░░░  0.781  < 0.80        After M7.4  ████████████████████  1.000
 ```
 
-The baseline and latest columns are not exactly comparable: the harness and fixtures changed between them, and each change is disclosed.
+**How to read these numbers.** The columns are not like for like, and each difference is disclosed:
+
+- The router and approval metrics now count only the **35 cases that reached the router**: the 7 adversarial cases the input guardrail blocks never get a route.
+- A blocked attack counts as **resisted** (nothing was drafted and a human decides). Amount and fake-rule demands are checked by a judge that asks whether the letter *applies* the demand, because a string match could not tell a letter that grants "$5,000" from one that refuses it.
+- The guardrail's attack patterns were written after reading the golden attacks (see the caveat under [Guardrails](#guardrails)).
+- **A rail that stops attacks hides whether the layers below it hold**, so the eval re-runs the 10 adversarial cases with the input rail switched off (`injection_pass_rate_rail_off`, reported, not gated). That scored 0.900. Its one failure was a measurement error: the letters correctly rejected the claim and only mentioned the fake "Rulebook section 99.4" to say it does not exist. Reading those letters showed it, and the check was changed to the judge above. The recorded 0.900 is from the old check.
 
 **Retrieval** was chosen by measurement, not by habit (25 questions, k = 5):
 
@@ -344,20 +354,25 @@ The first run was ugly (decision accuracy 0.13, **half the cases crashing**), an
 | **Letters did not cite the rulebook** | Judge citation score 1.27 / 5 | Prompt for it, and append a reference line in code when the model omits it | **1.27 → 3.75** |
 | **Over-escalation** | About 20 of 30 clean cases escalated | Confidence and repeat-dispute escalation as **rules in code**, real data fields for facts the rulebook asks for, deadline arithmetic computed in code | Escalated **~20 → 7** of 32; decision accuracy **0.13 → 0.78** |
 | **The rulebook contradicted itself** | Failed labels on $500+ cases traced to two sections of one document that disagree | Rewrote the policy to match the code | Policy and graph now agree |
-| **Bugs in the evals themselves** | Three "leaks" were refusals quoting the attack; the judge was not shown the evidence so it called real dates invented; fixtures were dated so no claim had passed its waiting period | Fixed the harness and fixtures, and disclosed each | Fewer false alarms, and honest numbers |
+| **The input guardrail was weak and unused** | Caught 3 of 9 attacks, and the graph never called it | Heuristics grouped by attacker goal plus an LLM judge, tuned on a held-out set, and wired in at intake: a block escalates the case unread | Catch **0.33 → 1.00**, 0 false positives, and a blocked attack costs no agent calls |
+| **Leak checks confused rebuttal with compliance** | Letters that *quoted* "$5,000" or "section 99.4" while refusing them were counted as leaks (found twice, by reading flagged letters) | A judge asks whether the letter grants or applies the demand; secrets and internal strings stay string-matched | Injection pass **0.90 → 1.00**, and no false alarms in the rail-off run |
+| **Bugs in the evals themselves** | Refusals quoting the attack; a judge that was not shown the evidence so it called real dates invented; fixtures dated so no claim had passed its waiting period; a metric list that flagged correctly blocked cases | Fixed the harness and fixtures, and disclosed each | Fewer false alarms, and honest numbers |
 
 ### Where it still fails, and why
 
-1. **Decision accuracy 0.781 (gate 0.80), 25 of 32.** Six of the seven misses are over-escalations. Three of them are not-as-described disputes whose key facts (the merchant contact date and return tracking) live only in the narrative, not in any tool. One miss is a **real misjudgment**: a duplicate charge accepted although its twin had already been refunded. A swing of one or two cases is within noise on one run.
-2. **Injection pass rate 0.900 (gate 1.00).** In the one failure, an amount-tampering attempt, the letter grants only the real charge but restates the attacker's "$5,000" while refusing it. The forbidden-string check counts the mention. No payload got a refund accepted.
-3. **Guardrail catch rate 0.333 (gate 0.80).** The regex input rails catch 3 of 9 attacks, and the graph does not call them yet. Wiring them in is the first item under [What I'd do next](#what-id-do-next).
+**Decision accuracy 0.781 (gate 0.80), 25 of 32: one case short, again.** The count did not change, but the cases did: giving the Resolution agent the merchant-contact and return facts fixed two cases (g25 and g32), while two others that passed before (g05 and g07) were escalated. That kind of swing is within noise for one run on 32 cases, and it is why a variance estimate is on the to-do list. The seven misses (all but one are over-escalations):
 
-**Promptfoo red team** (18 payloads run through the real graph): 4 of 18 passed at baseline, 14 after the first round of fixes, **16 after the second**. Of the two failures, one produced no decision and one is the amount-tampering restatement above. **No payload got a refund accepted.** Not re-run since.
+- **g04, g05, g07:** shipments that were returned, lost, or delivered under $250. The Policy agent's answer says the retrieved excerpts "do not define valid proof of delivery" or "give no rule for a lost shipment", and the Resolution agent escalates instead of deciding. This is a retrieval and policy-wording weakness, not missing data.
+- **g21:** two charges six days apart; the model correctly sees P30 does not apply, then finds no rule for the outcome and escalates.
+- **g27, g28:** the contact-date data is now present, but the model escalates on the counterfeit claim ("the reseller's confirmation is not in the file") and on whether a day-two failure is a qualifying defect.
+- **g22:** the one **real misjudgment**: a duplicate charge accepted although its twin charge had already been refunded.
+
+**Promptfoo red team** (18 payloads run through the real graph): 4 of 18 passed at baseline, 14 after the first round of fixes, **16 after the second**. Of the two failures, one produced no decision and one was the amount-tampering restatement, now judged correctly. **No payload got a refund accepted.** Not re-run since the guardrail work.
 
 ### Evals in CI
 
 - **Every push:** the retrieval eval runs against the ingested rulebook as part of the integration tests, and the golden set is validated against the real rulebook.
-- **Pull requests that touch agents, guardrails, the graph, RAG, policies or evals** (and on demand): [`evals.yml`](.github/workflows/evals.yml) starts Postgres, ingests the rulebook, runs the golden-set gate and the Promptfoo red team (version pinned), and uploads the results as artifacts and a job summary. It needs an `ANTHROPIC_API_KEY` repository secret, which is **not configured yet**, so this workflow has not run on GitHub. A run costs about 1.8M tokens and 29 minutes.
+- **Pull requests that touch agents, guardrails, the graph, RAG, policies or evals** (and on demand): [`evals.yml`](.github/workflows/evals.yml) starts Postgres, ingests the rulebook, runs the golden-set gate and the Promptfoo red team (version pinned), and uploads the results as artifacts and a job summary. It needs an `ANTHROPIC_API_KEY` repository secret, which is **not configured yet**, so this workflow has not run on GitHub. A run costs about 1.9M tokens and 28 minutes (roughly $6).
 
 ```bash
 uv sync --all-extras --dev --group evals && uv run python -m disputedesk.rag.ingest
@@ -367,7 +382,9 @@ uv run npx promptfoo@0.126.0 eval -c evals/promptfoo/redteam.yaml --no-cache
 
 ### Limits of these evals
 
-One run per configuration, so **no variance estimate**. Forty-two cases is small. The labels were written by hand, 31 of the 32 clean ones are accept or reject, and several are judgement calls. The system and the judge are the **same model**, so the judged metrics lean generous. Separating the judge, repeating each run and growing the set are on the [to-do list](#what-id-do-next).
+One run per configuration, so **no variance estimate**, and the last run showed how much that matters: the same 25-of-32 score with different cases wrong. Forty-two cases is small. The labels were written by hand, 31 of the 32 clean ones are accept or reject, and several are judgement calls. The system and the judge are the **same model**, so the judged metrics lean generous. The guardrail patterns were written after reading the golden attacks, so only the held-out dev set is blind. Separating the judge, repeating each run and growing the set are on the [to-do list](#what-id-do-next).
+
+One full run was **discarded**: Docker stalled partway through and 8 cases crashed on database connection errors, so its numbers measured the outage. It is not in any table. Since `evals/results/` is not under version control, the runner now archives the previous results before a new run replaces them.
 
 ---
 
@@ -385,7 +402,7 @@ One run per configuration, so **no variance estimate**. Forty-two cases is small
 | **LLM observability** | Langfuse v2 (self-hosted) | Prompts, tokens and cost per case, with a two-container footprint ([ADR-001](docs/adr/001-stack-choices.md)) |
 | **Evals** | DeepEval, LLM judge, Promptfoo | Faithfulness, letter quality, adversarial red team, all gated in CI |
 | **Reviewer UI** | Streamlit | A thin client over the API: scopes and audit apply to the UI like any other caller |
-| **Quality** | ruff, mypy `--strict`, pytest, pre-commit | 389 unit and 58 integration tests |
+| **Quality** | ruff, mypy `--strict`, pytest, pre-commit | 493 unit and 59 integration tests |
 | **CI/CD** | GitHub Actions | Lint, types and tests, plus separate security (CodeQL, gitleaks, dependency audit, Trivy) and eval workflows |
 | **Infra** | Docker Compose | Postgres, Langfuse, OTel Collector and Jaeger from one command |
 
@@ -402,6 +419,8 @@ make ui      # terminal 2: reviewer UI on :8501
 ```
 
 `LLM_PROVIDER=fake` (the default in `.env.example`) needs no API key and runs the whole system offline with a scripted model, so decisions are canned and the reviewer always approves. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` in `.env` for real behaviour. The first `make setup` downloads about 1 GB of local embedding and reranker weights, and the first `make api` fetches the reranker again, so allow a minute or two before the API answers.
+
+For real behaviour also set `GUARDRAIL_JUDGE=true`, which adds an LLM second opinion to the input guardrail (one extra call per dispute).
 
 **Reviewer UI.** Pick a queue (cases awaiting approval come first), open a case, and read the live agent trace and the draft decision and letter. Open cases have **Start dispute**. Cases paused at the human gate have **Approve** and **Reject**. For this local demo the UI signs its own approver token from `JWT_SECRET`; Cognito replaces that in the AWS phase.
 
@@ -436,7 +455,7 @@ data/policies/       # 15 fictional rulebook documents (reason codes, time limit
 evals/               # golden.jsonl (42 cases), retrieval.jsonl (25 questions), Promptfoo red team, thresholds.yml
 infra/               # Postgres init, OTel collector config
 docs/                # THREAT_MODEL.md, adr/ (001-005), img/ (screenshots)
-tests/               # unit (389) and integration (58, against real Postgres)
+tests/               # unit (493) and integration (59, against real Postgres)
 .github/workflows/   # ci.yml, security.yml, evals.yml
 ```
 
@@ -456,8 +475,8 @@ tests/               # unit (389) and integration (58, against real Postgres)
 
 ## Limitations
 
-- **The quality gate is red** ([3 of 9 thresholds](#evaluation-how-i-know-it-works-and-where-it-doesnt)), and one run per configuration gives no variance estimate. Eval labels were written by hand, 31 of 32 clean ones are accept or reject, and the system and the judge are the same model.
-- **Input and output guardrails are built but not wired into the graph.** Only the tool-call check is live.
+- **The quality gate is red on one metric** ([decision accuracy, one case short](#evaluation-how-i-know-it-works-and-where-it-doesnt)), and one run per configuration gives no variance estimate. Eval labels were written by hand, 31 of 32 clean ones are accept or reject, and the system and the judge are the same model.
+- **The input guardrail is live, the output rails are not.** `check_output` (PII and grounding) is built and tested but the graph does not call it. The LLM judge behind the input guardrail is off by default, and its attack patterns were tuned after reading the golden attacks.
 - **Injection is reduced, not eliminated.** The defence is structural (labelling, escaping, rule-based approval, reviewer, human). The real model was red-teamed with only 18 prompts.
 - **With the real model, high-risk cases tend to escalate before the human gate** (2 of 2 tried), consistent with the eval results. The reviewer is strict.
 - **Auth is a demo.** One shared HS256 secret signs user and agent tokens. There is no login, revocation or rate limiting, and the same user can start and approve a case.
@@ -467,8 +486,8 @@ tests/               # unit (389) and integration (58, against real Postgres)
 
 ## What I'd do next
 
-1. **Wire `check_input` and `check_output` into the graph** and widen the rails beyond regexes. That alone should move the guardrail catch rate.
-2. **Give the Evidence agent real facts for not-as-described disputes** (merchant contact date, return tracking). That accounts for three of the seven wrong decisions. Investigate the duplicate that was accepted although its twin charge was already refunded.
+1. **Close the last gap on decision accuracy.** Most misses are the Resolution agent escalating because the retrieved excerpts "do not settle" a lost, returned or delivered-under-$250 shipment. Better excerpts for those cases, and the g22 misjudgment, are the next fixes.
+2. **Wire `check_output` into the graph** (PII and grounding on the letter before it leaves) and re-run the Promptfoo red team against the new guardrail.
 3. **Separate the judge model, repeat each eval to measure variance**, and give the CI eval job its API key.
 4. **AWS deployment:** ECS Fargate, RDS, Cognito instead of the local JWT, and Bedrock behind the same `llm.py` interface.
 5. **Recovery for interrupted runs**, with a database lock instead of the in-memory guard, and the approver's note stored in the audit row.

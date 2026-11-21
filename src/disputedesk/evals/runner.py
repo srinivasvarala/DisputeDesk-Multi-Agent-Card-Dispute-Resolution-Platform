@@ -296,7 +296,8 @@ def expectation_misses(
             misses.append(f"{c.id}: run failed ({o.error})")
             continue
         problems = []
-        if o.reason_code != c.expected.reason_code:
+        # A case the input guardrail sent to a human never reached the router: no reason to score.
+        if o.input_flag is None and o.reason_code != c.expected.reason_code:
             problems.append(f"reason {o.reason_code} (expected {c.expected.reason_code})")
         if c.kind == "normal" and o.decision != c.expected.decision:
             problems.append(f"decision {o.decision} (expected {c.expected.decision})")
