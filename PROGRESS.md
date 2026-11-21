@@ -15,7 +15,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M7.1: Fix defects found by the evals | ✅ Partly done: crashes, retrieval fixed; gate still red | 2026-11-20 | `900dd1f`, see git log `fix(agents)` / `docs(evals)` |
 | M7.2: Analyst confidence, rule-based escalation, cited letters | ✅ Partly done: gate still red on 3 of 9 | 2026-11-20 | `b73748f`, see git log `feat(agents)` / `docs(evals)` |
 | M7.3: Tools carry the facts the rulebook asks for | ✅ Done; gate red on 3 of 9 (decision accuracy 0.781, just under) | 2026-11-20 | `22bef81`, `b10bb31`, see git log `feat(data)` / `feat(agents)` / `docs(evals)` |
-| M8: UI, docs and polish | ✅ Done (demo GIF and a live UI run not done, see M8 gaps) | 2026-11-20 | `4fabc83`, `2004ee0`, see git log `docs` / `feat(ui)` |
+| M8: UI, docs and polish | ✅ Done, except the demo GIF and a clean-clone `make setup` run (see M8 gaps) | 2026-11-20 | `4fabc83`, `2004ee0`, `1d67b59`, `bb787c0`, see git log `docs` / `feat(ui)` / `fix(ui)` / `ci` |
 | M9: AWS deployment (phase 2) | ⏳ Not started | | |
 
 Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
