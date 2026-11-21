@@ -38,8 +38,11 @@ POLL_SECONDS = 3
 
 @st.cache_resource
 def get_client() -> ReviewerClient:
-    token = issue_token(get_settings(), sub="reviewer-ui", role=Role.APPROVER)
-    return ReviewerClient(API_URL, token)
+    settings = get_settings()
+    # One token per request: the process lives longer than a token does.
+    return ReviewerClient(
+        API_URL, lambda: issue_token(settings, sub="reviewer-ui", role=Role.APPROVER)
+    )
 
 
 def act_and_rerun(case_id: str) -> None:

@@ -3,6 +3,8 @@ JWT scopes and the audit log apply exactly as they do for any other caller."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx2 as httpx
 from pydantic import TypeAdapter
 
@@ -20,16 +22,14 @@ class ReviewerClient:
     def __init__(
         self,
         base_url: str,
-        token: str,
+        token: str | Callable[[], str],
         *,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._http = httpx.Client(
-            base_url=base_url,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15,
-            transport=transport,
-        )
+        # A callable is asked for a fresh token on every request, so a UI process that outlives
+        # one token's lifetime keeps working.
+        self._token = token if callable(token) else (lambda: token)
+        self._http = httpx.Client(base_url=base_url, timeout=15, transport=transport)
 
     def list_cases(self, status: CaseStatus | None = None) -> list[CaseSummary]:
         params = {"case_status": status.value} if status else {}
@@ -49,7 +49,8 @@ class ReviewerClient:
 
     def _call(self, method: str, url: str, **kwargs: object) -> object:
         try:
-            resp = self._http.request(method, url, **kwargs)  # type: ignore[arg-type]
+            headers = {"Authorization": f"Bearer {self._token()}"}
+            resp = self._http.request(method, url, headers=headers, **kwargs)  # type: ignore[arg-type]
         except httpx.HTTPError as exc:
             raise ApiError(f"cannot reach the API: {exc}") from exc
         if resp.is_error:

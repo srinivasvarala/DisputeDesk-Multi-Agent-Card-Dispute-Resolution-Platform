@@ -84,3 +84,20 @@ def test_badges_cover_every_status_and_decision() -> None:
     assert node_color("escalate") == "red" and node_color("router") == "blue"
     assert badge("router", "blue") == ":blue-badge[router]"
     assert pretty("pending_approval") == "Pending approval"
+
+
+def test_a_token_factory_is_called_for_every_request() -> None:
+    tokens = iter(["first", "second"])
+    seen: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["authorization"])
+        return httpx.Response(200, json=[])
+
+    client = ReviewerClient(
+        "http://api", lambda: next(tokens), transport=httpx.MockTransport(handle)
+    )
+    client.list_cases()
+    client.list_cases()
+
+    assert seen == ["Bearer first", "Bearer second"]
