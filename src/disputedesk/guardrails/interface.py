@@ -20,10 +20,12 @@ from pydantic import BaseModel
 
 from disputedesk.config import get_settings
 from disputedesk.db.models import AuditEntry, AuditOutcome
+from disputedesk.guardrails.judges import LLMJudge
 from disputedesk.guardrails.nemo_edge import NemoEdge
 from disputedesk.guardrails.policy_rules import RuleAction, evaluate_tool_call, refund_amount
 from disputedesk.guardrails.redaction import get_redactor
 from disputedesk.guardrails.telemetry import emit_guardrail_event
+from disputedesk.llm import get_llm
 from disputedesk.mcp_servers.common.store import AuditSink
 
 log = logging.getLogger(__name__)
@@ -53,7 +55,9 @@ class Verdict(BaseModel):
 @lru_cache(maxsize=1)
 def _edge() -> NemoEdge:
     """Built on first use: loading NeMo and spaCy takes seconds; tool checks need neither."""
-    return NemoEdge(get_redactor())
+    settings = get_settings()
+    judge = LLMJudge(get_llm(settings)) if settings.guardrail_judge else None
+    return NemoEdge(get_redactor(), judge)
 
 
 _OUTCOME = {

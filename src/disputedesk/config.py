@@ -44,6 +44,12 @@ class Settings(BaseSettings):
         arrives as an empty string. Treat that as "not set", not as a model named ''."""
         return None if value == "" else value
 
+    # --- Guardrails ---
+    # Ask the LLM judge for a second opinion on inputs the heuristics let through (one extra
+    # model call per input). Off by default so tests and CI stay offline. It fails closed: a
+    # judge error blocks the input.
+    guardrail_judge: bool = False
+
     # --- Agents ---
     tool_timeout_seconds: float = 15.0
     tool_max_retries: int = 2

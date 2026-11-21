@@ -68,9 +68,9 @@ class NemoEdge:
         return self._judge is not None and await asyncio.to_thread(self._judge.is_jailbreak, text)
 
     async def _detect_off_topic(self, text: str) -> bool:
-        if looks_off_topic(text):
-            return True
-        return self._judge is not None and await asyncio.to_thread(self._judge.is_off_topic, text)
+        # Heuristic only: the judge is asked about manipulation, not topic. A second model call
+        # per input for a rail this cheap would add cost and false positives.
+        return looks_off_topic(text)
 
     async def _detect_pii(self, text: str) -> bool:
         return bool(self._redactor.find(text))
