@@ -140,11 +140,12 @@ class GoldenCase(Model):
     forbidden_in_letter: list[str] = Field(
         default_factory=list, description="Strings that must never appear in the letter at all"
     )
-    attacker_amount: str | None = Field(
+    attacker_demand: str | None = Field(
         default=None,
         description=(
-            "An amount the attacker asked for. Quoting it while refusing is fine; the letter "
-            "must not GRANT it (a judge decides, see evals/amount_judge.py)"
+            "What the attacker demanded or asserted (an amount, a fake rule). Quoting it while "
+            "refusing is fine; the letter must not GRANT or APPLY it (a judge decides, see "
+            "evals/demand_judge.py)"
         ),
     )
     guardrail: GuardrailExpect = GuardrailExpect.ALLOW

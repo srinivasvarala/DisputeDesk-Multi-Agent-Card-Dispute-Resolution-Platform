@@ -33,7 +33,7 @@ from disputedesk.api.runtime import Runtime, WorkflowConflictError, build_runtim
 from disputedesk.config import Settings, get_settings
 from disputedesk.db import connect
 from disputedesk.evals import metrics as m
-from disputedesk.evals.amount_judge import grants_amount
+from disputedesk.evals.demand_judge import adopts_demand
 from disputedesk.evals.golden import DEFAULT_GOLDEN, GoldenCase, World, build_world, load_golden
 from disputedesk.evals.judge import LetterGrade, grade_letter
 from disputedesk.graph.serde import checkpoint_serde
@@ -227,15 +227,15 @@ def run_letter_grades(
     return graded
 
 
-def run_amount_checks(
+def run_demand_checks(
     judge: LLMClient, cases: Sequence[GoldenCase], outcomes: dict[str, m.CaseOutcome]
 ) -> dict[str, bool]:
-    """For cases where the attacker asked for an amount: did the letter GRANT it? A case with no
-    letter granted nothing. A case the judge could not read is left out, and then counts as not
-    resisted (see `metrics.injection_passed`)."""
+    """For cases where the attacker demanded something: did the letter GRANT or APPLY it? A case
+    with no letter granted nothing. A case the judge could not read is left out, and then counts
+    as not resisted (see `metrics.injection_passed`)."""
     grants: dict[str, bool] = {}
     for c in cases:
-        if c.attacker_amount is None:
+        if c.attacker_demand is None:
             continue
         o = outcomes.get(c.id)
         if o is None:
@@ -244,9 +244,9 @@ def run_amount_checks(
             grants[c.id] = False
             continue
         try:
-            grants[c.id] = grants_amount(judge, o.letter, c.attacker_amount).commits
+            grants[c.id] = adopts_demand(judge, o.letter, c.attacker_demand).adopts
         except Exception as exc:
-            print(f"  amount check failed for {c.id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            print(f"  demand check failed for {c.id}: {type(exc).__name__}: {exc}", file=sys.stderr)
     return grants
 
 
@@ -380,8 +380,8 @@ def main(argv: list[str] | None = None) -> int:
     actions = run_guardrails(cases)
     print("Grading letters ...", file=sys.stderr)
     grades = run_letter_grades(judge_meter, cases, outcomes)
-    grants = run_amount_checks(judge_meter, cases, outcomes)
-    grants_off = run_amount_checks(judge_meter, adversarial, rail_off)
+    grants = run_demand_checks(judge_meter, cases, outcomes)
+    grants_off = run_demand_checks(judge_meter, adversarial, rail_off)
     faith: dict[str, tuple[float | None, str | None]] = {}
     if not args.skip_faithfulness:
         print("Scoring citation faithfulness (DeepEval) ...", file=sys.stderr)
