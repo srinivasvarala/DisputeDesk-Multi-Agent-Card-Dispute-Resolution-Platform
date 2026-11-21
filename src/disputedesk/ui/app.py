@@ -53,6 +53,10 @@ def act_and_rerun(case_id: str) -> None:
 def render_header(view: DisputeView, summary: CaseSummary | None) -> None:
     left, right = st.columns([3, 2], vertical_alignment="center")
     left.markdown(f"## {view.case_id}")
+    if summary:
+        left.caption(
+            f"{pretty(summary.reason_code.value)} dispute · opened {summary.opened_at:%b %d, %Y}"
+        )
     right.markdown(
         badge(pretty(view.case_status.value), status_color(view.case_status))
         + "  "
@@ -60,14 +64,13 @@ def render_header(view: DisputeView, summary: CaseSummary | None) -> None:
     )
     with st.container(border=True):
         cols = st.columns(4)
-        cols[0].metric("Reason", pretty(summary.reason_code.value) if summary else "n/a")
-        cols[1].metric("Amount", money(summary.amount_cents) if summary else "n/a")
+        cols[0].metric("Amount", money(summary.amount_cents) if summary else "n/a")
+        cols[1].metric("Risk tier", view.route.risk_tier.value.title() if view.route else "n/a")
+        approval = "n/a"
         if view.route:
-            cols[2].metric("Risk tier", view.route.risk_tier.value.title())
-            cols[3].metric("Human approval", "Required" if view.route.approval_required else "No")
-        else:
-            cols[2].metric("Risk tier", "n/a")
-            cols[3].metric("Human approval", "n/a")
+            approval = "Required" if view.route.approval_required else "No"
+        cols[2].metric("Human approval", approval)
+        cols[3].metric("Reviewer revisions", view.revision_count)
 
 
 def render_trace(view: DisputeView) -> None:
