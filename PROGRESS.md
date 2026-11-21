@@ -518,8 +518,13 @@ Guardrail alone on the **held-out dev set**: heuristics 23/24 caught, 0/24 false
 - **I overwrote the previous run's raw results.** `evals/results/` is gitignored, and I assumed it was tracked. The M7.3 `latest.json` is gone; its numbers and per-case misses are preserved in this file and the README. The runner now archives the previous results first.
 - Twice my own cleanup `kill` matched my own shell, because the command text contained the process name I was searching for.
 
+### After the measured run: rulebook gaps (`fb41059`, not yet re-measured)
+- The remaining misses g04, g05, g07, g21, g22 traced to missing rules, not model errors. Added to the fictional rulebook: lost or returned shipment -> accept (04); delivery proof at or below $250 needs no signature (04); a `refunded` or `voided` status in the record proves a prior reversal (06); charges more than 3 days apart are not a duplicate -> reject (06). Thresholds untouched.
+- **Partial evidence only:** 23 R20/P30 cases, real model, new text indexed: 16 of 17 clean cases correct and all five targets passed; g19 missed once, then accepted 3 of 3 reruns. Targeted at seen cases, no faithfulness scoring, one run. The full-run number is still 0.781 until re-run.
+- **A first attempt was void:** the eval reads the Postgres policy index, not the files, and I had not re-ingested (`python -m disputedesk.rag.ingest`), so it measured the old rulebook; the g05/g07/g22 flips in it were noise. Re-ingest after any edit to `data/policies/`.
+
 ### Known gaps
-- Decision accuracy is one case short, on one run; no variance estimate (several runs would show how much of 0.781 is noise).
+- Decision accuracy is one case short, on one run; no variance estimate (several runs would show how much of 0.781 is noise). The rulebook fixes above are not yet in a full-run number.
 - The input patterns were written after reading the golden attacks; only the dev set is blind. The judge adds generalisation, but its own false-positive rate is measured on 56 clean narratives only.
 - `check_output` is not wired. The Promptfoo red team was not re-run after the guardrail work (16 of 18 after M7.2).
 - The golden fixtures carry the not-as-described facts as structured data, mirroring the narratives; in production they would come from a case-intake form, which does not exist (there is no create-case API).

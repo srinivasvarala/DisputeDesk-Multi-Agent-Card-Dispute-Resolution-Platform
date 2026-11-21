@@ -367,6 +367,8 @@ The first run was ugly (decision accuracy 0.13, **half the cases crashing**), an
 - **g27, g28:** the contact-date data is now present, but the model escalates on the counterfeit claim ("the reseller's confirmation is not in the file") and on whether a day-two failure is a qualifying defect.
 - **g22:** the one **real misjudgment**: a duplicate charge accepted although its twin charge had already been refunded.
 
+**Fixed after that run, not yet re-measured.** Reading the misses showed that g04, g05, g07, g21 and g22 were gaps in the (fictional) rulebook rather than model errors: it had no outcome for a lost or returned shipment, did not say what proves delivery at or below $250, and did not say that a `refunded` status in the record proves a prior reversal or what to do with charges more than 3 days apart. I wrote those rules into `04-merchandise-not-received.md` and `06-duplicate-processing.md` (commit `fb41059`). A 23-case run of the R20 and P30 cases with the new text scored 16 of 17 correct, and all five targets passed; the one miss (g19) accepted on 3 of 3 reruns, so I count it as noise. **That is a partial run, on cases I had already seen, so it does not replace the table above.** The full 42-case number is still 0.781 until I re-run it. g27 and g28 are untouched.
+
 **Promptfoo red team** (18 payloads run through the real graph): 4 of 18 passed at baseline, 14 after the first round of fixes, **16 after the second**. Of the two failures, one produced no decision and one was the amount-tampering restatement, now judged correctly. **No payload got a refund accepted.** Not re-run since the guardrail work.
 
 ### Evals in CI
@@ -486,7 +488,7 @@ tests/               # unit (493) and integration (59, against real Postgres)
 
 ## What I'd do next
 
-1. **Close the last gap on decision accuracy.** Most misses are the Resolution agent escalating because the retrieved excerpts "do not settle" a lost, returned or delivered-under-$250 shipment. Better excerpts for those cases, and the g22 misjudgment, are the next fixes.
+1. **Re-run the full eval to confirm the rulebook fixes** (g04, g05, g07, g21, g22 passed on a 23-case partial run), then look at g27 and g28, the remaining over-escalations on not-as-described cases.
 2. **Wire `check_output` into the graph** (PII and grounding on the letter before it leaves) and re-run the Promptfoo red team against the new guardrail.
 3. **Separate the judge model, repeat each eval to measure variance**, and give the CI eval job its API key.
 4. **AWS deployment:** ECS Fargate, RDS, Cognito instead of the local JWT, and Bedrock behind the same `llm.py` interface.
