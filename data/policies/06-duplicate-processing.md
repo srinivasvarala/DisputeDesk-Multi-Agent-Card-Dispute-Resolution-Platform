@@ -40,9 +40,14 @@ The merchant defeats a P30 claim with either of the following:
 
 - Charges match the P30 definition and the merchant does not prove two separate orders:
   **accept**, refunding the amount of one charge.
+- The charges do not meet the P30 definition, for example they settled **more than 3 calendar
+  days apart** (such as a monthly subscription renewal): **reject**. They are separate valid
+  charges, not a duplicate, and the letter says so.
 - Merchant proves two separate orders: **reject**.
-- One of the charges was already refunded: **reject**, because the cardholder has already been
-  made whole. No double recovery is allowed.
+- One of the charges was already refunded or voided: **reject**, because the cardholder has
+  already been made whole. No double recovery is allowed. A refunded or voided status on either
+  charge in the transaction record is proof of this: the merchant does not need to submit
+  anything, and a refund date is not required when the record shows the status.
 - More than two identical charges: each extra charge after the first is treated as its own
   duplicate within the same case.
 

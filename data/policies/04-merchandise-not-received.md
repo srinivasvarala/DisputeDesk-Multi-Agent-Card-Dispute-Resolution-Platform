@@ -47,8 +47,13 @@ delivery is not proven and the dispute is **accepted**, even if the address is n
 ## Decision rules
 
 - No shipment was created, or tracking never shows a carrier scan: **accept**.
-- Valid proof of delivery: **reject**. The decision letter tells the cardholder they may open a
-  claim with the carrier.
+- The carrier shows the shipment as **lost**, or **returned to the sender**, and never delivered:
+  **accept**. The goods did not reach the cardholder, so the merchant has no proof of delivery.
+  The cardholder does not need to wait for the carrier's claim to close.
+- Valid proof of delivery: **reject**. For an order of $250.00 or less this means an approved
+  carrier record showing delivered, to the address on the order, on or before the filing date. A
+  signature is not needed at or below $250.00. The decision letter tells the cardholder they may
+  open a claim with the carrier.
 - Shipment is in transit and still within 15 days of the expected delivery date: hold the case.
 - Only part of the order was delivered: **accept** a partial refund for the undelivered items
   (see `10-refunds-and-provisional-credit.md`).
