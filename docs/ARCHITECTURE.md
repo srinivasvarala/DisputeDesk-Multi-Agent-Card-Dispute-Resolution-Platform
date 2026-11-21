@@ -79,8 +79,10 @@ flowchart TD
     resolution --> reviewer
     reviewer -->|"revise, at most 2 times"| resolution
     reviewer -->|"revisions used up"| escalate
-    reviewer -->|"approved, low or medium risk"| finalize
-    reviewer -->|"approved, high risk"| request_approval
+    reviewer -->|"approved"| output_check
+    output_check -->|"letter blocked or guardrail error"| escalate
+    output_check -->|"low or medium risk"| finalize
+    output_check -->|"high risk"| request_approval
     request_approval --> human_gate
     human_gate -->|"approver says yes"| finalize
     human_gate -->|"approver says no"| escalate
@@ -90,9 +92,12 @@ flowchart TD
 
 - **Two ways out:** a case is either *finalized* (a decision and a letter) or *escalated* to a human
   with a reason. There is no third state, and every path that is not clearly safe ends in escalation.
+- **The output check** runs on every approved accept or reject letter, before finalize or the human
+  gate, so a person never approves a letter that has not been checked. Details in section 5.
 - **The human gate** is the only place the run pauses. It calls LangGraph's `interrupt()`, so the
   run stops at a checkpoint and resumes when `POST /disputes/{id}/approve` supplies the decision.
-  The node re-runs from the top on resume, so it has no side effects.
+  The node re-runs from the top on resume, so it has no side effects. The user who started the case
+  cannot approve it (maker-checker, section 9).
 - **The revision loop** lets the reviewer send a draft back to the resolution agent at most twice
   (`MAX_REVISIONS` in `graph/state.py`). The third "revise" escalates instead of looping.
 - **A blocked narrative** goes from intake straight to a human. No agent reads it.
@@ -112,6 +117,7 @@ does the reading and the judgement.**
 | policy | LLM agent | Turn the case into a policy question, retrieve rulebook excerpts, answer from them | `search_policies` (the retriever) |
 | resolution | LLM agent | Decide accept, reject or escalate, give a confidence, write the letter | `save_draft` |
 | reviewer | LLM agent | Check the draft against the evidence and policy: approve or send back with feedback | none |
+| output_check | Plain code | Run the output guardrail on the letter; redact PII into a new draft version, or flag a blocked letter | `save_draft`, as its own actor `output_guard` |
 | request_approval, finalize, escalate | Plain code | Move the status through the validated state machine | `get_case`, `update_status` |
 
 The deterministic parts live in `graph/rules.py`, `graph/routing.py` and `graph/system_nodes.py`:
@@ -150,8 +156,9 @@ Four layers stop an agent from calling a tool it should not:
 2. **Signed credential.** Each call carries a 60-second token naming the agent and its allowed
    tools (`security/agent_tokens.py`). Each server verifies it and denies anything outside it, even
    if the `ToolBox` were bypassed.
-3. **Tool-call guardrail.** `check_tool_call` runs plain-Python rules before a call: for example, a
-   refund at or above the cap forces human approval.
+3. **Tool-call guardrail.** `check_tool_call` runs plain-Python rules before a call and denies a
+   tool outside the agent's allowlist. It has no argument rules today: nothing is paid out, so there
+   is no refund amount to cap, and the risk tier is what routes large amounts to a human.
 4. **State machine.** The cases server validates every status change, so no caller can move a case
    to a state the workflow does not allow.
 
@@ -171,10 +178,15 @@ a check errors, the text is blocked):
 |---|---|---|---|
 | `check_input` | The cardholder narrative at intake | Presidio redaction, NeMo rails, pattern heuristics, optional LLM judge | Yes |
 | `check_tool_call` | Every tool call | Plain-Python rules (`policy_rules.py`) | Yes, in the `ToolBox` |
-| `check_output` | The decision letter | Presidio and NeMo | **Built, not yet wired** |
+| `check_output` | The decision letter | Presidio and NeMo | Yes, in the `output_check` step |
 
 A blocked narrative goes to a human unread. A redacted one reaches the agents with the sensitive
-spans replaced. Audit rows hold the rail names and entity types, never the text. The LLM judge is
+spans replaced. On the way out, `graph/output_guard.py` checks each accept or reject letter: PII is
+redacted and the result saved as a **new draft version** (so the original stays on record) by the
+`output_guard` actor, whose only tool is `save_draft`. The grounding rail requires every dollar
+amount and card last-4 in the letter to appear in the case material (the case amounts, the
+evidence, the policy answer), and a letter that fails it escalates the case instead of being sent.
+A guardrail error escalates too. An `escalate` draft sends no letter and is not checked. Audit rows hold the rail names and entity types, never the text. The LLM judge is
 off by default (`GUARDRAIL_JUDGE=false`) and is an opt-in layer for generalisation. See
 [ADR-003](adr/003-guardrails.md) and the [threat model](THREAT_MODEL.md).
 
@@ -214,7 +226,10 @@ One Postgres instance (with the pgvector extension) holds everything:
 | LangGraph checkpoint tables | The graph state at every step, so a paused case survives a restart |
 
 **The audit log** records who did what, to which case, with which outcome (allowed, denied or
-error). `GET /audit` reads it and is itself audited. One exception is deliberate: `GET /disputes`
+error). A failed step records the **exception type only**, never its message: the message can echo
+the model's reply, and so the cardholder's narrative, and the log cannot be edited afterwards. The
+detail goes to the application log. (Two kinds of free text are stored on purpose or not yet
+handled: the approver's own note, and the arguments of MCP tool calls. See section 12.) `GET /audit` reads it and is itself audited. One exception is deliberate: `GET /disputes`
 and `GET /disputes/{id}` read case state and are not audited, because they would drown the log.
 
 ## 8. Observability
@@ -241,12 +256,19 @@ the matched text.
 Three roles map to those scopes in `security/scopes.py`: **analyst** (read, start), **approver**
 (analyst plus approve) and **admin** (approver plus audit read).
 
+- **Maker-checker.** The token's subject that started a case is stored in the graph state (so it
+  survives a restart) and `claim_resume` refuses an approval from the same subject: 403, an audited
+  `DENIED` row with the reason, and the case keeps waiting. There is no admin exemption. A case with
+  no recorded starter (an eval run, or one started before the rule) is not blocked, so it cannot be
+  stranded. The approver's note (up to 1,000 characters) is stored in the approve audit row.
 - **Auth.** HS256 JWT with a pinned algorithm and required `exp`, `iss`, `aud` and `sub`;
   `alg=none` is rejected. Roles map to scopes in plain Python, and scopes inside a token are
   ignored. The app refuses to start without a secret of at least 32 characters.
 - **The reviewer UI** (`ui/`) is a thin Streamlit client of this API. It holds no business logic
   and no database access. It mints a fresh short-lived token per request, so an expired session
-  cannot produce a stale-credential error. Its case list refreshes through a fragment.
+  cannot produce a stale-credential error. A sidebar selector switches between two demo people (an
+  analyst who starts cases and an approver who decides them), because the API would refuse a single
+  identity doing both. The page only mirrors the rule; the API enforces it. Its case list refreshes through a fragment.
 
 ## 10. Evals and the quality gate
 
@@ -282,8 +304,13 @@ These are enforced in review and, where possible, in tests:
 
 ## 12. Not built yet
 
-- **`check_output` is not wired** into the graph, so letters are not scanned for PII or ungrounded
-  claims before they leave. The function exists and is tested on its own.
+- **The output guardrail is not yet measured with the real model.** It runs on every letter (M10),
+  and it is tested end to end on the fake model, but a grounding false positive would show up as an
+  extra escalation. The next full eval reports it.
+- **MCP audit rows store tool arguments as sent**, so a `save_draft` row holds the full letter and
+  rationale in an append-only table. They are built from text the input guardrail has already
+  redacted, but it is still free text. The fix would store lengths and a hash for free-text
+  arguments.
 - **AWS deployment (M9)** is not started. The plan is ECS Fargate services (API, three MCP servers,
   UI), RDS Postgres with pgvector, an ALB, Secrets Manager and Cognito in place of the local JWT,
   CloudWatch with the ADOT collector, and Claude on Bedrock behind the same `llm.py` and guardrail

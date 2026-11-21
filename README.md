@@ -41,7 +41,7 @@ DisputeDesk is my answer to *"how do you put LLM agents in a workflow that moves
 | **Observability** | OpenTelemetry + Jaeger + Langfuse, an append-only audit log | **134 spans, 1 trace, $0.028** for one real case |
 | **Evals** | 42-case golden set (10 adversarial), 25-question retrieval set, 18-payload red team, LLM-judge and DeepEval metrics | Decision accuracy **0.13 → 0.78**, guardrail catch **0.33 → 1.00**, injection pass **0.40 → 1.00**, faithfulness **0.98**. **Gate red on 1 of 9** (was 3), reported as is ([details](#evaluation-how-i-know-it-works-and-where-it-doesnt)) |
 | **Security** | JWT roles and scopes, STRIDE threat model with a test per control, CodeQL, gitleaks, dependency audit, container scan | [Threat model](docs/THREAT_MODEL.md) |
-| **Engineering** | Python 3.12, strict mypy, ruff, 493 unit + 59 integration tests, 5 ADRs, GitHub Actions | CI and Security workflows green |
+| **Engineering** | Python 3.12, strict mypy, ruff, 501 unit + 59 integration tests, 5 ADRs, GitHub Actions | CI and Security workflows green |
 
 ---
 
@@ -111,7 +111,7 @@ flowchart LR
 
     subgraph GUARD["Guardrails (fail closed)"]
         direction TB
-        G1["<b>Tool-call rules</b><br/>allowlist · refund cap"]
+        G1["<b>Tool-call rules</b><br/>per-agent allowlist"]
         G2["<b>NeMo rails</b><br/>injection · PII · grounding"]
         G3["<b>Presidio</b><br/>PII redaction"]
     end
@@ -156,8 +156,10 @@ flowchart LR
     RESOLUTION --> REVIEWER["<b>Reviewer</b><br/>approve or revise"]
     REVIEWER -->|"revise (max 2)"| RESOLUTION
     REVIEWER -->|"3rd revise"| ESCALATE
-    REVIEWER -->|"approved, low or medium risk"| FINALIZE
-    REVIEWER -->|"approved, high risk"| GATE{{"<b>Human gate</b><br/>LangGraph interrupt"}}
+    REVIEWER -->|"approved"| OUTPUT["<b>Output check</b><br/>PII + grounding of the letter"]
+    OUTPUT -->|"letter blocked"| ESCALATE
+    OUTPUT -->|"low or medium risk"| FINALIZE
+    OUTPUT -->|"high risk"| GATE{{"<b>Human gate</b><br/>LangGraph interrupt"}}
     GATE -->|"approved"| FINALIZE["<b>Finalize</b><br/>resolved accepted / rejected"]
     GATE -->|"rejected"| ESCALATE["<b>Escalate</b><br/>to a human"]
 
@@ -177,9 +179,10 @@ flowchart LR
 4. **Policy agent** retrieves the relevant rulebook sections and returns a summary with **citations that code verifies** against the retrieved text.
 5. **Resolution agent** decides *accept / reject / escalate* and writes the cardholder letter, saving each version as a draft. **Rules then check the draft** and force an escalation the analyst cannot argue away (confidence below 0.70, or a cardholder with 3 or more disputes in 90 days). A forced escalation skips review.
 6. **Reviewer agent** checks the draft against the evidence and policy. It can send it back for revision, at most twice. A third request escalates.
-7. **Risk routing.** An approved draft on a low or medium risk case is finalized. On a high-risk case it goes to the human gate.
-8. **Human gate.** High-risk cases pause at a LangGraph `interrupt()`, checkpointed in Postgres. A human approves or rejects in the reviewer UI, and the run resumes, even after an API restart.
-9. **Finalize** is the only step that changes the case status, and it is plain code.
+7. **Output check.** The approved letter goes through the output guardrail before anyone can act on it. PII is redacted and saved as a new draft version under its own actor (`output_guard`, which may only call `save_draft`). A dollar amount or card last-4 that appears nowhere in the case material blocks the letter and escalates the case. A guardrail failure blocks too. An `escalate` draft sends no letter, so it is skipped.
+8. **Risk routing.** A checked letter on a low or medium risk case is finalized. On a high-risk case it goes to the human gate.
+9. **Human gate.** High-risk cases pause at a LangGraph `interrupt()`, checkpointed in Postgres. A human approves or rejects in the reviewer UI, and the run resumes, even after an API restart. **Maker-checker:** the user who started the case cannot approve it (403, audited), with no admin exemption.
+10. **Finalize** is the only step that changes the case status, and it is plain code.
 
 ## Agent Responsibilities
 
@@ -225,13 +228,13 @@ Each tool call carries a **60-second signed credential** that lists the calling 
 
 ## Guardrails
 
-All checks go through **one interface**, `guardrails/interface.py`: `check_input`, `check_output` and `check_tool_call`. Each returns a verdict of `allow`, `redact`, `block`, `deny` or `require_approval`, and **any check that errors fails closed**.
+All checks go through **one interface**, `guardrails/interface.py`: `check_input`, `check_output` and `check_tool_call`. Each returns a verdict of `allow`, `redact`, `block` or `deny`, and **any check that errors fails closed**.
 
 | Layer | What it does | Mechanism | Status |
 |---|---|---|---|
-| **Tool-call rules** | Denies a tool outside the agent's allowlist. Forces human approval for any refund at or above $500. A negative, unreadable or unknown-unit amount also forces approval. Deny wins over the cap | Plain Python, no LLM (`policy_rules.py`) | **Live** in the `ToolBox` |
+| **Tool-call rules** | Denies a tool outside the agent's allowlist. Argument rules would go here too, but no tool needs one yet (nothing is paid out, so there is no refund cap; the risk tier routes large amounts to a human) | Plain Python, no LLM (`policy_rules.py`) | **Live** in the `ToolBox` |
 | **Input guardrail** | Screens the cardholder's narrative before any agent reads it. Blocks manipulation (override instructions, claimed authority or prior approval, tag breakout, skip-the-human-gate, prompt extraction, fake policy, personas, dictated output, letter-spaced obfuscation) and off-topic text. **A block escalates the case to a human with no agent call**; PII is redacted before the agents see the text | Generic heuristics grouped by attacker goal, plus an optional **LLM judge** as a second opinion (`GUARDRAIL_JUDGE=true`, routed through `llm.py`, fails closed), inside NeMo Guardrails flows | **Live at intake** |
-| **Output rails** | Blocks PII leaking into a reply. **Grounding check**: every dollar amount and card last-4 in an output must appear in the case material that was supplied | NeMo flows plus deterministic checks | Built and tested. **Not yet called by the graph** |
+| **Output guardrail** | Runs on every accept or reject letter before it can leave. PII is redacted and saved as a new draft version. **Grounding check**: every dollar amount and card last-4 in the letter must appear in the case material (the case amount, the evidence, the policy answer). A block, or a guardrail error, escalates the case to a human | NeMo flows plus deterministic checks, in the `output_check` step | **Live** (M10) |
 | **PII redaction** | Detects and masks card numbers, SSNs, emails, phones and IBANs. Applied to every prompt and reply before it is sent to the LLM-tracing backend, and inside the input and output checks. Audit rows record rail and entity types, never the text | Presidio + spaCy (names are excluded on purpose: too many false positives on merchant names) | **Live** for LLM traces |
 | **Untrusted-text isolation** | Everything derived from a customer or merchant is escaped, wrapped as `<tag trust="untrusted">`, placed only in the user message, and never in a system prompt | `agents/common.py::untrusted()` | **Live** |
 | **Identity and credentials** | JWT roles map to scopes in plain Python (`analyst`, `approver`, `admin`). Agents get per-call signed credentials. The approver is the token's subject, never a field in the request body | `security/` | **Live** |
@@ -241,7 +244,7 @@ All checks go through **one interface**, `guardrails/interface.py`: `check_input
 
 **How well the input guardrail works, and how that was measured.** The first version caught 3 of 9 attacks in the eval, because the patterns were weak. They were rebuilt and tuned on a **separate held-out dev set** (24 attacks in varied styles, 24 realistic clean narratives that deliberately use risky-sounding words such as "supervisor", "ignore" and "pre-approved"): the heuristics alone catch **23 of 24 with 0 false positives**, and with the LLM judge on, **24 of 24 with 0 false positives**. On the golden set the real check catches **9 of 9 with 0 of 32 false positives**. One honest caveat: I had read the golden attacks before writing the patterns, so the golden number is not a blind test. The dev set is the better estimate of how it generalises. Reproduce with `scripts/guardrail_check.py`.
 
-**An honest note on status.** The input guardrail is live; the judge is **off by default** (it costs one extra model call per dispute and keeps tests offline), so turn it on with a real provider. The **output rails are built and tested but not called by the graph yet**. Defence in depth is what keeps the rest safe: untrusted-text labelling, rule-based approval, the Reviewer agent and the human gate. Those lower layers are measured on their own too: the eval re-runs the adversarial cases with the input rail switched off ([Evaluation](#evaluation-how-i-know-it-works-and-where-it-doesnt)).
+**An honest note on status.** Both edges are live: the input guardrail at intake and the output guardrail on the letter (M10). The LLM judge behind the input guardrail is **off by default** (it costs one extra model call per dispute and keeps tests offline), so turn it on with a real provider. The output guardrail has not yet been measured with the real model: a grounding false positive would show up as an extra escalation, and the next full eval run reports it. Defence in depth is what keeps the rest safe: untrusted-text labelling, rule-based approval, the Reviewer agent and the human gate. Those lower layers are measured on their own too: the eval re-runs the adversarial cases with the input rail switched off ([Evaluation](#evaluation-how-i-know-it-works-and-where-it-doesnt)).
 
 The full list of threats, controls and the test that proves each one is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
@@ -406,7 +409,7 @@ One full run was **discarded**: Docker stalled partway through and 8 cases crash
 | **LLM observability** | Langfuse v2 (self-hosted) | Prompts, tokens and cost per case, with a two-container footprint ([ADR-001](docs/adr/001-stack-choices.md)) |
 | **Evals** | DeepEval, LLM judge, Promptfoo | Faithfulness, letter quality, adversarial red team, all gated in CI |
 | **Reviewer UI** | Streamlit | A thin client over the API: scopes and audit apply to the UI like any other caller |
-| **Quality** | ruff, mypy `--strict`, pytest, pre-commit | 493 unit and 59 integration tests |
+| **Quality** | ruff, mypy `--strict`, pytest, pre-commit | 501 unit and 59 integration tests |
 | **CI/CD** | GitHub Actions | Lint, types and tests, plus separate security (CodeQL, gitleaks, dependency audit, Trivy) and eval workflows |
 | **Infra** | Docker Compose | Postgres, Langfuse, OTel Collector and Jaeger from one command |
 
@@ -459,7 +462,7 @@ data/policies/       # 15 fictional rulebook documents (reason codes, time limit
 evals/               # golden.jsonl (42 cases), retrieval.jsonl (25 questions), Promptfoo red team, thresholds.yml
 infra/               # Postgres init, OTel collector config
 docs/                # ARCHITECTURE.md, THREAT_MODEL.md, adr/ (001-005), img/ (screenshots)
-tests/               # unit (493) and integration (59, against real Postgres)
+tests/               # unit (501) and integration (59, against real Postgres)
 .github/workflows/   # ci.yml, security.yml, evals.yml
 ```
 
@@ -480,10 +483,10 @@ tests/               # unit (493) and integration (59, against real Postgres)
 ## Limitations
 
 - **The quality gate is red on one metric** ([decision accuracy, one case short](#evaluation-how-i-know-it-works-and-where-it-doesnt)), and one run per configuration gives no variance estimate. Eval labels were written by hand, 31 of 32 clean ones are accept or reject, and the system and the judge are the same model.
-- **The input guardrail is live, the output rails are not.** `check_output` (PII and grounding) is built and tested but the graph does not call it. The LLM judge behind the input guardrail is off by default, and its attack patterns were tuned after reading the golden attacks.
+- **Both guardrail edges are live, but the output one is unmeasured.** The letter is checked for PII and ungrounded figures (M10), but no real-model eval has run since, so its false-positive rate is not known. The LLM judge behind the input guardrail is off by default, and its attack patterns were tuned after reading the golden attacks.
 - **Injection is reduced, not eliminated.** The defence is structural (labelling, escaping, rule-based approval, reviewer, human). The real model was red-teamed with only 18 prompts.
 - **With the real model, high-risk cases tend to escalate before the human gate** (2 of 2 tried), consistent with the eval results. The reviewer is strict.
-- **Auth is a demo.** One shared HS256 secret signs user and agent tokens. There is no login, revocation or rate limiting, and the same user can start and approve a case.
+- **Auth is a demo.** One shared HS256 secret signs user and agent tokens. There is no login, revocation or rate limiting. The user who started a case cannot approve it (maker-checker), but both people are demo identities the UI mints for itself.
 - **Single API process.** The one-run-per-case guard is in memory, and a case interrupted by a restart needs a manual reset.
 - **Synthetic everything.** 40 seeded cases and a fictional rulebook. The `fake` LLM exercises the plumbing, not the judgement.
 - **No refund is paid.** Approval changes case status; there is no payout step.
@@ -491,7 +494,7 @@ tests/               # unit (493) and integration (59, against real Postgres)
 ## What I'd do next
 
 1. **Re-run the full eval to confirm the rulebook fixes** (g04, g05, g07, g21, g22 passed on a 23-case partial run), then look at g27 and g28, the remaining over-escalations on not-as-described cases.
-2. **Wire `check_output` into the graph** (PII and grounding on the letter before it leaves) and re-run the Promptfoo red team against the new guardrail.
+2. **Measure the output guardrail with the real model** (its false-positive rate, and a Promptfoo red-team re-run) as part of the next full eval.
 3. **Separate the judge model, repeat each eval to measure variance**, and give the CI eval job its API key.
 4. **AWS deployment:** ECS Fargate, RDS, Cognito instead of the local JWT, and Bedrock behind the same `llm.py` interface.
 5. **Recovery for interrupted runs**, with a database lock instead of the in-memory guard, and the approver's note stored in the audit row.

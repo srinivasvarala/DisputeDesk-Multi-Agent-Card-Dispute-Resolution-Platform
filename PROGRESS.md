@@ -17,7 +17,8 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M7.3: Tools carry the facts the rulebook asks for | ✅ Done; gate red on 3 of 9 (decision accuracy 0.781, just under) | 2026-11-20 | `22bef81`, `b10bb31`, see git log `feat(data)` / `feat(agents)` / `docs(evals)` |
 | M7.4: Input guardrail, demand judge, not-as-described facts | ✅ Done; gate red on 1 of 9 (decision accuracy 0.781, one case short) | 2026-11-21 | `a5e8ecf`, `f0c4b15`, `e99ca59`, `29b0ef4`, `1f3ab44`, `29d1ed7`, `0935b76`, see git log `feat(guardrails)` / `feat(graph)` / `feat(evals)` / `feat(data)` |
 | M8: UI, docs and polish | ✅ Done (demo GIF recorded and a fresh clone verified end to end on 2026-11-21; `docker compose up` from clean not re-run, see M8 gaps) | 2026-11-20 | `4fabc83`, `2004ee0`, `1d67b59`, `bb787c0`, see git log `docs` / `feat(ui)` / `fix(ui)` / `ci` |
-| M9: AWS deployment (phase 2) | ⏳ Not started | | |
+| M10: Close the safety gaps | ✅ Done (real-model behaviour of the output guardrail not yet measured, see M10 gaps) | 2026-11-21 | `a6047d6`, `de5d756`, `298b3e8`, `776f8bb`, `0af6403`, see git log `feat(graph)` / `feat(api)` / `feat(ui)` / `fix(audit)` / `docs` |
+| M9: AWS deployment (phase 2) | ⏳ Not started (phase 3 roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)) | | |
 
 Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 
@@ -573,3 +574,44 @@ API errors during a poll tick or a button click were not caught (fragment reruns
 - With the real model, high-risk cases tend to escalate before the human gate (2 of 2 tried), consistent with the eval results.
 - `GET /disputes` loads all cases and filters by status and limit in Python (fine at 40 cases; push the filter into the store for more). The UI asks for up to 500 cases per page load and has no pagination.
 - The 60 s `llm_timeout_seconds` against `DEFAULT_MAX_TOKENS` 8192 flagged in the M7.3 review is still open.
+
+---
+
+## M10: Close the safety gaps ✅
+
+**Goal:** make the safety claims true without footnotes. Part of the phase 3 plan in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+### Delivered
+- **Output guardrail wired (R1).** A new `output_check` graph step (`graph/output_guard.py`) runs `check_output` on every accept or reject letter, after the reviewer approves and before finalize or the human gate. PII is redacted and saved as a new draft version by its own actor, `output_guard` (allowlist: `save_draft` only). An ungrounded dollar amount or card last-4 blocks the letter; a block or a guardrail error sets `output_flag` and escalates the case, so a blocked letter never reaches the approval gate. `escalate` drafts send no letter and are skipped. Grounding material is the case amounts (formatted as dollars), the evidence, and the policy answer and its quotes, never the letter or the analyst's draft.
+- **Error text out of the audit log and traces (R2).** `DecisionAuditor.record_failure` stores the exception type only; the router, evidence, resolution, reviewer and policy agents use it. The MCP audit wrapper keeps messages we wrote ourselves and records types only for anything else (a pydantic error echoes the bad value); crash detail goes to the application log. `Runtime._drive` sets `error.type` on the span instead of `record_exception`.
+- **Dead refund-cap rule removed (R3).** No tool carries a refund amount, so `REQUIRE_APPROVAL` could never fire. Removed with `ApprovalRequiredError` and the `approval_required` audit outcome. `check_tool_call` keeps the allowlist deny and its `arguments` parameter for a future argument rule.
+- **Maker-checker (R4).** `DisputeState.started_by` (the token subject) is checkpointed; `claim_resume` refuses an approval from the starter: 403, an audited `DENIED` row with the reason, no admin exemption, the case keeps waiting. The approve audit row now carries the approver's note. `DisputeView.started_by` is exposed. The UI has an "Acting as" selector (Maya, analyst; Ravi, approver) and explains the rule. `scripts/run_disputes.py` starts and approves as two users.
+- THREAT_MODEL rows 8 to 10, ARCHITECTURE, README and ADR-003 updated to match.
+
+### Acceptance
+| Criterion | Result |
+|---|---|
+| Letter with PII is saved redacted, no PII in the saved draft | ✅ `test_output_guard.py`: card number removed from version 2, version 1 kept, written by `output_guard` |
+| Letter with a figure that is nowhere in the case escalates with the rail as the reason | ✅ `output_flag == "check grounding"`, reason "output guardrail blocked the letter (check grounding)"; a high-risk case never reaches `request_approval` |
+| Guardrail failure fails closed | ✅ NeMo edge raising gives `output_flag == "nemo_error"` and an escalation |
+| Canary in the model reply appears in no audit row and no span, for each agent | ✅ five agents, plus an MCP validation-error test. Mutation-checked: restoring `str(exc)` in the auditor, the policy agent or the runtime span makes the tests fail |
+| `grep -rn "error=str(exc)" src/disputedesk/agents` returns nothing | ✅ |
+| Starter cannot approve; another approver can | ✅ approver and admin, 403 plus a `DENIED` row; then a different approver succeeds. Still enforced after a restart (integration test) |
+| UI works with two personas | ✅ three new page tests (analyst, starter, different approver). Not re-recorded as a GIF |
+| Ruff, mypy (strict), unit and integration tests | ✅ ruff clean, mypy clean (78 files), 501 unit passed (1 skipped), 59 integration passed |
+
+### Decisions
+- **Refund cap removed, not kept as future-proofing** (asked; the threshold still drives the risk tier).
+- **A blocked letter escalates, with no retry** (asked). Simple and fail-closed, at the cost that a false positive counts as an over-escalation.
+- **`started_by` lives in the graph state, not on the `cases` table** (asked). It survives a restart with no schema change, so a case started before this milestone has no starter and is not blocked. M14 can move it into the run table.
+- **The approver's note goes in the approve audit row** (asked), capped at 1,000 characters, never into a trace. It is human-written free text, a deliberate exception to "no free text in audit".
+- **The output step has its own actor** (`output_guard`) rather than borrowing the resolution agent's `save_draft`, so the log shows who changed a letter and the resolution agent's allowlist did not grow.
+- Plan deviation found while working: the audit leak was wider than the roadmap listed. It also covered the reviewer and policy agents, the MCP audit wrapper, and `span.record_exception` in the runtime.
+- Test helper `TwoPersonClient` starts as one user and sends `/approve` as another, so the existing end-to-end tests satisfy the new rule without each naming a user.
+
+### Known gaps
+- **MCP audit rows store tool arguments as sent.** A `save_draft` row holds the full letter and rationale in the append-only table (built from text the input guardrail already redacted, but still free text). Not fixed here: it changes the audit shape and is a decision of its own (store lengths and a hash for free-text arguments).
+- **The output guardrail has not run against the real model.** All tests use the fake model. A grounding false positive would appear as an extra escalation; M11's full run measures it. The Promptfoo red team was not re-run.
+- A case with no recorded starter can be approved by anyone (by design, see Decisions).
+- Two demo identities are minted by the UI itself; real identities need Cognito (M9).
+
