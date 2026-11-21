@@ -22,6 +22,7 @@ from disputedesk.agents.router import RouterAgent
 from disputedesk.agents.toolbox import ToolBox, tool_index
 from disputedesk.config import Settings
 from disputedesk.graph.builder import Nodes, Update
+from disputedesk.graph.output_guard import OutputCheck, OutputGuard
 from disputedesk.graph.state import DisputeState, Verdict
 from disputedesk.graph.system_nodes import InputCheck, WorkflowSteps
 from disputedesk.llm import LLMClient
@@ -41,6 +42,7 @@ class Dependencies:
     issuer: CredentialIssuer | None = None  # None: tool calls carry no credential (tests)
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
     input_check: InputCheck | None = None  # None = the real input guardrail
+    output_check: OutputCheck | None = None  # None = the real output guardrail
 
 
 def build_nodes(deps: Dependencies) -> Nodes:
@@ -67,6 +69,7 @@ def build_nodes(deps: Dependencies) -> Nodes:
         return DecisionAuditor(deps.audit, agent, deps.clock)
 
     steps = WorkflowSteps(box(allowlists.SYSTEM), deps.audit, deps.input_check)
+    output_guard = OutputGuard(box(allowlists.OUTPUT_GUARD), deps.audit, deps.output_check)
     router = RouterAgent(
         llm,
         box(allowlists.ROUTER),
@@ -127,6 +130,7 @@ def build_nodes(deps: Dependencies) -> Nodes:
         policy=policy_node,
         resolution=resolution_node,
         reviewer=reviewer_node,
+        output_check=output_guard.check,
         request_approval=steps.request_approval,
         finalize=steps.finalize,
         escalate=steps.escalate,

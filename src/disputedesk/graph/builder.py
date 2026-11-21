@@ -3,9 +3,10 @@
     intake -> router -> evidence -> policy -> resolution -> reviewer
                                                   ^            |
                                                   +- revise ---+  (at most MAX_REVISIONS)
-    reviewer approve -> finalize                        (low risk)
-                     -> request_approval -> human_gate  (approval required) -> finalize
-    revisions exhausted, an escalate draft, or a human "no" -> escalate
+    reviewer approve -> output_check (PII and grounding of the letter)
+        -> finalize                                     (low risk)
+        -> request_approval -> human_gate               (approval required) -> finalize
+    revisions exhausted, an escalate draft, a blocked letter, or a human "no" -> escalate
     intake blocked the narrative (input guardrail)          -> escalate, no agent reads it
 
 Nodes are injected (`Nodes`) so the skeleton can run on stubs and tests can swap any one node.
@@ -23,7 +24,13 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
-from disputedesk.graph.routing import after_human, after_intake, after_resolution, after_review
+from disputedesk.graph.routing import (
+    after_human,
+    after_intake,
+    after_output_check,
+    after_resolution,
+    after_review,
+)
 from disputedesk.graph.state import DisputeState, HumanDecision
 from disputedesk.observability.otel import agent_span, set_risk_tier
 
@@ -44,6 +51,7 @@ NODE_NAMES = (
     "policy",
     "resolution",
     "reviewer",
+    "output_check",
     "request_approval",
     "finalize",
     "escalate",
@@ -58,6 +66,7 @@ class Nodes:
     policy: Node
     resolution: Node
     reviewer: Node
+    output_check: Node
     request_approval: Node
     finalize: Node
     escalate: Node
@@ -107,7 +116,10 @@ def build_graph(
     graph.add_edge("policy", "resolution")
     graph.add_conditional_edges("resolution", after_resolution, ["reviewer", "escalate"])
     graph.add_conditional_edges(
-        "reviewer", after_review, ["resolution", "request_approval", "finalize", "escalate"]
+        "reviewer", after_review, ["resolution", "output_check", "escalate"]
+    )
+    graph.add_conditional_edges(
+        "output_check", after_output_check, ["request_approval", "finalize", "escalate"]
     )
     graph.add_edge("request_approval", "human_gate")
     graph.add_conditional_edges("human_gate", after_human, ["finalize", "escalate"])

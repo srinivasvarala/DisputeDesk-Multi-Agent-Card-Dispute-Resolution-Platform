@@ -113,4 +113,7 @@ class DisputeState(BaseModel):
     # Set at intake when the input guardrail blocks the narrative: the case goes straight to a
     # human and no agent reads the text. Holds the rail that fired, never the text itself.
     input_flag: str | None = None
+    # Set by the output guardrail step when it blocks the letter: the case goes to a human and
+    # the letter is not sent. Holds the rail that fired, never the text itself.
+    output_flag: str | None = None
     path: list[str] = Field(default_factory=list, description="Nodes visited, in order")

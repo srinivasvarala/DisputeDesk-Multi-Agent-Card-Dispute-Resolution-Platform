@@ -10,6 +10,7 @@ EVIDENCE = "evidence_agent"
 POLICY = "policy_agent"
 RESOLUTION = "resolution_agent"
 REVIEWER = "reviewer_agent"
+OUTPUT_GUARD = "output_guard"  # redacts a letter and saves it as a new draft version (no LLM)
 
 ALLOWLISTS: dict[str, frozenset[str]] = {
     SYSTEM: frozenset({"get_case", "update_status"}),
@@ -27,4 +28,5 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     POLICY: frozenset({"search_policies"}),  # the RAG retriever, not an MCP tool
     RESOLUTION: frozenset({"save_draft"}),
     REVIEWER: frozenset(),  # judges the draft from state; no tools at all
+    OUTPUT_GUARD: frozenset({"save_draft"}),  # only to store the redacted letter
 }

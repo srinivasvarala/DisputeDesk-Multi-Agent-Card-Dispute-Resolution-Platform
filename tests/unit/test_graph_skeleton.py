@@ -27,7 +27,7 @@ def values(graph: Any, config: Any) -> DisputeState:
 def test_happy_path_low_risk_resolves_without_a_human() -> None:
     graph, config = run()
     state = values(graph, config)
-    assert state.path == [*BASE, "reviewer", "finalize"]
+    assert state.path == [*BASE, "reviewer", "output_check", "finalize"]
     assert state.final_status == CaseStatus.RESOLVED_ACCEPTED
     assert graph.get_state(config).next == ()
 
@@ -35,7 +35,14 @@ def test_happy_path_low_risk_resolves_without_a_human() -> None:
 def test_one_revision_then_approve() -> None:
     graph, config = run(revisions_requested=1)
     state = values(graph, config)
-    assert state.path == [*BASE, "reviewer", "resolution", "reviewer", "finalize"]
+    assert state.path == [
+        *BASE,
+        "reviewer",
+        "resolution",
+        "reviewer",
+        "output_check",
+        "finalize",
+    ]
     assert state.revision_count == 1
     assert state.draft is not None
     assert state.draft.version == 2
@@ -81,3 +88,12 @@ def test_human_rejection_escalates() -> None:
     graph, config = run(approval_required=True)
     graph.invoke(Command(resume={"approved": False, "approver": "ana"}), config)
     assert values(graph, config).final_status == CaseStatus.ESCALATED
+
+
+def test_a_flagged_letter_escalates_whatever_the_risk_tier() -> None:
+    from disputedesk.graph.routing import after_output_check
+
+    assert (
+        after_output_check(DisputeState(case_id="c", output_flag="check grounding")) == "escalate"
+    )
+    assert after_output_check(DisputeState(case_id="c")) == "finalize"

@@ -103,6 +103,9 @@ def stub_nodes(
             }
         return {"review": Review(verdict=Verdict.APPROVE)}
 
+    def output_check(state: DisputeState) -> Update:
+        return {}
+
     def request_approval(state: DisputeState) -> Update:
         return {}
 
@@ -124,6 +127,7 @@ def stub_nodes(
         policy=policy,
         resolution=resolution,
         reviewer=reviewer,
+        output_check=output_check,
         request_approval=request_approval,
         finalize=finalize,
         escalate=escalate,

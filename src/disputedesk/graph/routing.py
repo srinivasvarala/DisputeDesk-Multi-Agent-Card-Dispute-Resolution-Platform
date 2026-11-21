@@ -9,7 +9,8 @@ from disputedesk.graph.state import MAX_REVISIONS, DisputeState, Verdict
 
 AfterIntake = Literal["router", "escalate"]
 AfterResolution = Literal["reviewer", "escalate"]
-AfterReview = Literal["resolution", "request_approval", "finalize", "escalate"]
+AfterReview = Literal["resolution", "output_check", "escalate"]
+AfterOutputCheck = Literal["request_approval", "finalize", "escalate"]
 AfterHuman = Literal["finalize", "escalate"]
 
 
@@ -26,7 +27,7 @@ def after_resolution(state: DisputeState) -> AfterResolution:
 
 
 def after_review(state: DisputeState) -> AfterReview:
-    """Revise (at most MAX_REVISIONS times), then approve or escalate.
+    """Revise (at most MAX_REVISIONS times), or approve and go on to the output check.
 
     The reviewer node bumps `revision_count` each time it asks for a revision, so with a
     limit of 2 the third "revise" is the one that escalates.
@@ -36,6 +37,13 @@ def after_review(state: DisputeState) -> AfterReview:
         raise ValueError("reviewer produced no verdict")
     if review.verdict == Verdict.REVISE:
         return "resolution" if state.revision_count <= MAX_REVISIONS else "escalate"
+    return "output_check"  # an approved letter is checked before anyone can act on it
+
+
+def after_output_check(state: DisputeState) -> AfterOutputCheck:
+    """A blocked letter goes to a human. Otherwise: a person approves high-risk cases first."""
+    if state.output_flag is not None:
+        return "escalate"
     if state.route is not None and state.route.approval_required:
         return "request_approval"
     return "finalize"

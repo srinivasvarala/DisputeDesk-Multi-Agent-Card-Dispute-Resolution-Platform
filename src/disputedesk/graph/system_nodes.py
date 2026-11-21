@@ -95,6 +95,8 @@ class WorkflowSteps:
 def escalation_reason(state: DisputeState) -> str:
     if state.input_flag is not None:
         return f"input guardrail flagged the narrative ({state.input_flag}); referred to a human"
+    if state.output_flag is not None:
+        return f"output guardrail blocked the letter ({state.output_flag}); referred to a human"
     if state.human is not None and not state.human.approved:
         return f"human reviewer {state.human.approver} did not approve: {state.human.note}"[:1000]
     if state.draft is not None and state.draft.decision == Decision.ESCALATE:

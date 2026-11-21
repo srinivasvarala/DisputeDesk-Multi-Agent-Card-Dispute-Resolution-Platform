@@ -129,6 +129,7 @@ def test_happy_path_resolves_without_a_human(
         "policy",
         "resolution",
         "reviewer",
+        "output_check",
         "finalize",
     ]
     assert body["case_status"] in ("resolved_accepted", "resolved_rejected")
