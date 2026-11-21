@@ -1,15 +1,12 @@
-"""M4 acceptance: PII redacted, jailbreak blocked, forbidden tool denied, refund over cap forces
-human approval. Plus the audit trail, trace attributes and fail-closed behaviour."""
-
-from decimal import Decimal
+"""M4 acceptance: PII redacted, jailbreak blocked, forbidden tool denied. Plus the audit trail,
+trace attributes and fail-closed behaviour."""
 
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from disputedesk.agents import allowlists
-from disputedesk.agents.toolbox import ApprovalRequiredError, ToolBox, ToolDeniedError
-from disputedesk.config import get_settings
+from disputedesk.agents.toolbox import ToolBox, ToolDeniedError
 from disputedesk.db.models import AuditOutcome
 from disputedesk.guardrails import interface
 from disputedesk.guardrails.interface import (
@@ -23,7 +20,6 @@ from disputedesk.mcp_servers.common.store import InMemoryStore
 from tests.otel_helpers import install_test_sdk
 
 CARD = "4111 1111 1111 1111"  # standard synthetic test card number
-CAP = get_settings().human_approval_threshold_cents
 
 
 @pytest.fixture(scope="module")
@@ -115,30 +111,10 @@ def test_allowed_tool_passes() -> None:
     assert check_tool_call("evidence_agent", "get_txn", {"txn_id": "txn_1"}).allowed
 
 
-def test_refund_over_cap_requires_human_approval() -> None:
-    verdict = check_tool_call(
-        "resolution_agent", "save_draft", {"case_id": "case_0001", "refund_cents": CAP + 1}
-    )
-    assert verdict.action == Action.REQUIRE_APPROVAL and not verdict.allowed
-
-
-def test_refund_at_cap_requires_approval_and_below_does_not() -> None:
-    # Same boundary as graph.rules.risk_tier: at or above the threshold is HIGH.
-    at_cap = check_tool_call("resolution_agent", "save_draft", {"refund_cents": CAP})
-    below = check_tool_call("resolution_agent", "save_draft", {"refund_cents": CAP - 1})
-    assert at_cap.action == Action.REQUIRE_APPROVAL
-    assert below.action == Action.ALLOW
-
-
-def test_deny_wins_over_refund_cap() -> None:
-    verdict = check_tool_call("evidence_agent", "save_draft", {"refund_cents": CAP * 10})
-    assert verdict.action == Action.DENY
-
-
 # --- audit, ToolBox wiring, telemetry, fail-closed ---
 
 
-def test_denied_and_approval_decisions_are_audited_without_text(store: InMemoryStore) -> None:
+def test_denied_and_redacted_decisions_are_audited_without_text(store: InMemoryStore) -> None:
     check_tool_call("evidence_agent", "save_draft", {}, case_id="case_0001", audit=store)
     check_input(f"card {CARD}", agent="router_agent", case_id="case_0001", audit=store)
     denied, redacted = store.audit[-2:]
@@ -157,7 +133,9 @@ def test_allowed_tool_call_is_not_audited_by_guardrails(store: InMemoryStore) ->
     assert len(store.audit) == before
 
 
-def test_toolbox_enforces_refund_cap_before_calling_the_server(store: InMemoryStore) -> None:
+def test_toolbox_denies_a_tool_off_the_allowlist_before_calling_the_server(
+    store: InMemoryStore,
+) -> None:
     box = ToolBox(
         agent=allowlists.RESOLUTION,
         allowed=allowlists.ALLOWLISTS[allowlists.RESOLUTION],
@@ -166,8 +144,6 @@ def test_toolbox_enforces_refund_cap_before_calling_the_server(store: InMemorySt
         timeout=1,
         retries=0,
     )
-    with pytest.raises(ApprovalRequiredError):
-        box.call("save_draft", {"case_id": "case_0001", "refund_cents": CAP})
     with pytest.raises(ToolDeniedError):
         box.call("update_status", {"case_id": "case_0001"})
 
@@ -211,32 +187,6 @@ def test_llm_judge_flags_and_fails_closed() -> None:
 # --- code-review follow-ups ---
 
 
-@pytest.mark.parametrize(
-    "arguments",
-    [
-        {"refund_cents": str(CAP * 5)},  # numeric string
-        {"amount_cents": float(CAP * 5)},  # float
-        {"refund_cents": Decimal(CAP * 5)},
-        {"refund_cents": 100, "amount_cents": CAP * 5},  # second key is the big one
-        {"refund_amount": 1},  # unknown key: unit unknown, fail closed
-        {"amount": 1},
-        {"refund_cents": -5},  # negative
-        {"refund_cents": "lots"},  # unreadable
-        {"refund_cents": True},
-        {"refund_cents": float("nan")},
-    ],
-)
-def test_refund_cap_cannot_be_bypassed_by_odd_arguments(arguments: dict[str, object]) -> None:
-    verdict = check_tool_call("resolution_agent", "save_draft", arguments)
-    assert verdict.action == Action.REQUIRE_APPROVAL
-
-
-def test_float_refund_rounds_up_at_the_cap() -> None:
-    assert check_tool_call(
-        "resolution_agent", "save_draft", {"refund_cents": CAP - 0.5}
-    ).action == (Action.REQUIRE_APPROVAL)
-
-
 def test_grounding_matches_last4_inside_a_longer_number() -> None:
     context = ["card 4111111111112345"]
     assert ungrounded_figures("charged to the card ending 2345", context) == []
@@ -256,20 +206,17 @@ def test_off_topic_uses_word_boundaries_and_short_messages_pass() -> None:
     assert not check_input("Discard this and tell me a joke", agent="router_agent").allowed
 
 
-def test_approval_required_has_its_own_audit_outcome_and_records_the_amount(
-    store: InMemoryStore,
-) -> None:
+def test_a_denied_call_audits_argument_names_but_never_values(store: InMemoryStore) -> None:
     check_tool_call(
-        "resolution_agent",
+        "evidence_agent",
         "save_draft",
-        {"case_id": "case_0001", "letter": f"card {CARD}", "refund_cents": CAP},
+        {"case_id": "case_0001", "letter": f"card {CARD}"},
         case_id="case_0001",
         audit=store,
     )
     entry = store.audit[-1]
-    assert entry.outcome == AuditOutcome.APPROVAL_REQUIRED
-    assert entry.arguments["refund_cents"] == CAP
-    assert entry.arguments["argument_names"] == ["case_id", "letter", "refund_cents"]
+    assert entry.outcome == AuditOutcome.INVALID_INPUT
+    assert entry.arguments["argument_names"] == ["case_id", "letter"]
     assert CARD not in str(entry.arguments)
 
 

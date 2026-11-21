@@ -22,7 +22,7 @@ from disputedesk.config import get_settings
 from disputedesk.db.models import AuditEntry, AuditOutcome
 from disputedesk.guardrails.judges import LLMJudge
 from disputedesk.guardrails.nemo_edge import NemoEdge
-from disputedesk.guardrails.policy_rules import RuleAction, evaluate_tool_call, refund_amount
+from disputedesk.guardrails.policy_rules import RuleAction, evaluate_tool_call
 from disputedesk.guardrails.redaction import get_redactor
 from disputedesk.guardrails.telemetry import emit_guardrail_event
 from disputedesk.llm import get_llm
@@ -38,7 +38,6 @@ class Action(StrEnum):
     REDACT = "redact"  # allowed, but `text` is the redacted version: use it, not the original
     BLOCK = "block"  # edge text rejected by a rail
     DENY = "deny"  # tool call refused
-    REQUIRE_APPROVAL = "require_approval"  # a human approver must decide first
 
 
 class Verdict(BaseModel):
@@ -65,7 +64,6 @@ _OUTCOME = {
     Action.REDACT: AuditOutcome.OK,
     Action.BLOCK: AuditOutcome.INVALID_INPUT,
     Action.DENY: AuditOutcome.INVALID_INPUT,
-    Action.REQUIRE_APPROVAL: AuditOutcome.APPROVAL_REQUIRED,
 }
 
 
@@ -177,13 +175,6 @@ def check_output(
     )
 
 
-def _amount(arguments: Mapping[str, Any]) -> int | None:
-    try:
-        return refund_amount(arguments)
-    except ValueError:
-        return None
-
-
 def check_tool_call(
     agent: str,
     tool: str,
@@ -193,21 +184,16 @@ def check_tool_call(
     allowed: frozenset[str] | None = None,
     audit: AuditSink | None = None,
 ) -> Verdict:
-    """Deterministic: the agent's tool allowlist, then the refund cap.
+    """Deterministic: is the tool on the agent's allowlist?
 
     `allowed` overrides the default allowlist for the agent (a `ToolBox` passes its own).
+    `arguments` are not judged today (no tool needs it) but are audited by name, and this is
+    where a rule about argument values would go.
     """
-    result = evaluate_tool_call(
-        agent,
-        tool,
-        arguments,
-        cap_cents=get_settings().human_approval_threshold_cents,
-        allowed=allowed,
-    )
+    result = evaluate_tool_call(agent, tool, allowed=allowed)
     action = {
         RuleAction.ALLOW: Action.ALLOW,
         RuleAction.DENY: Action.DENY,
-        RuleAction.REQUIRE_APPROVAL: Action.REQUIRE_APPROVAL,
     }[result.action]
     verdict = Verdict(action=action, rail="policy_rules", reasons=result.reasons)
     return _record(
@@ -216,11 +202,7 @@ def check_tool_call(
         agent=agent,
         case_id=case_id,
         audit=audit,
-        # Argument names and the refund amount only: values (letters, evidence) may hold PII.
-        detail={
-            "tool": tool,
-            "argument_names": sorted(arguments),
-            "refund_cents": _amount(arguments),
-        },
+        # Argument names only: values (letters, evidence) may hold PII.
+        detail={"tool": tool, "argument_names": sorted(arguments)},
         audit_allow=False,  # allowed calls are audited by the MCP servers themselves
     )

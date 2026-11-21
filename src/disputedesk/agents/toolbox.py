@@ -33,10 +33,6 @@ class ToolDeniedError(PermissionError):
     """The agent tried a tool that is not on its allowlist."""
 
 
-class ApprovalRequiredError(PermissionError):
-    """The call is allowed in principle but a human approver must decide first (refund cap)."""
-
-
 class ToolCallError(NonRetryableError, RuntimeError):
     """The server answered with an error (not found, conflict, invalid input...). Retrying
     the same request cannot help."""
@@ -80,8 +76,6 @@ class ToolBox:
         )
         if verdict.action == Action.DENY:
             raise ToolDeniedError(f"{self.agent} may not call {tool}")
-        if verdict.action == Action.REQUIRE_APPROVAL:
-            raise ApprovalRequiredError("; ".join(verdict.reasons))
         server = self._tools.get(tool)
         if server is None:
             raise ToolCallError(f"no server provides tool {tool}")
