@@ -17,6 +17,7 @@ import argparse
 import json
 import logging
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -310,6 +311,21 @@ def expectation_misses(
     return misses
 
 
+def archive_previous(out_dir: Path) -> None:
+    """Keep the last run's results before a new run replaces them. `evals/results/` is not under
+    version control, so without this every run silently destroys the one before it."""
+    history = out_dir / "history"
+    for name in ("latest.json", "summary.md"):
+        previous = out_dir / name
+        if not previous.exists():
+            continue
+        history.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.fromtimestamp(previous.stat().st_mtime, UTC).strftime("%Y%m%dT%H%M%SZ")
+        target = history / f"{stamp}-{name}"
+        if not target.exists():
+            shutil.copy2(previous, target)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the DisputeDesk golden-set evals.")
     parser.add_argument("--thresholds", type=Path, default=Path("evals/thresholds.yml"))
@@ -441,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    archive_previous(args.out_dir)
     report = {
         "run": {
             "started": datetime.now(UTC).isoformat(),
