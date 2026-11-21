@@ -489,6 +489,8 @@ Six findings; three fixed in `fix(agents)`: (1) an empty `EVAL_JUDGE_MODEL` / `E
 | UI shows list, trace, approve/reject | ✅ Run in Chrome against the live API (scripted model): `case_0021` (fraud, $1,351.14, high risk) started, paused at the human gate, approved in the UI, resolved; audit shows `start_dispute`, the status changes and `approve_dispute` by `user:reviewer-ui`. On the real model two high-risk cases (`case_0013`, `case_0018`) escalated after reviewer revisions, so the gate was not reached there |
 | Fresh clone runs with `make setup`, `make api`, `make ui` | ⚠️ `make -n setup` checked; the real run was not done |
 | README complete | ✅ |
+| Fresh clone runs end to end | ✅ Fresh `git clone` of `abe9413`: `.env` and JWT secret generated, `uv sync` from the lockfile, seed (40 cases), policy ingest (15 sources, 92 chunks), API with the fake model, `run_disputes.py` ran 5 disputes (low, medium and 2 high-risk ones that paused and resumed on approval), UI loaded against it. Done against a throwaway Postgres on another port so the working stack was untouched |
+| Demo GIF | ✅ `docs/img/disputedesk-review-demo.gif` (11 frames, 1.5 MB), recorded against the current UI |
 
 ### Decisions
 - The UI goes through the API, never the database, so scopes and audit apply.
@@ -505,7 +507,7 @@ API errors during a poll tick or a button click were not caught (fragment reruns
 - The `pip-audit` job audits shipped dependencies only (`--no-dev`), decided with the user: it failed on 13 advisories in `virtualenv`, which only `pre-commit` (a dev tool) pulls in, and its fixed release needs `packaging>=26.3` while langfuse 2.x requires `packaging<25`. Dev tools are therefore not audited until langfuse is upgraded.
 
 ### Known gaps
-- `make setup` from a clean clone not run. No demo GIF saved (13 frames were recorded in the browser but not exported).
+- `docker compose up -d --wait` was not re-run in the clean-clone check (fixed ports and project name would have collided with a running stack); it was last verified in M0 and is exercised by CI.
 - The approval note is sent to the API but not stored in the audit row (only role and approved are); the UI label no longer claims it is.
 - With the real model, high-risk cases tend to escalate before the human gate (2 of 2 tried), consistent with the eval results.
 - `GET /disputes` loads all cases and filters by status and limit in Python (fine at 40 cases; push the filter into the store for more). The UI asks for up to 500 cases per page load and has no pagination.

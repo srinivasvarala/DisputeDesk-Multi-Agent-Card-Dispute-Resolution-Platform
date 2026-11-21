@@ -48,6 +48,11 @@ DisputeDesk is my answer to *"how do you put LLM agents in a workflow that moves
 ## Demo
 
 <p align="center">
+  <img src="docs/img/disputedesk-review-demo.gif" alt="Demo: start a high-risk dispute, watch the agents work live, approve it at the human gate, and see it resolved" width="100%">
+</p>
+<p align="center"><em>Start a dispute, watch the five agents work (the page updates live), approve it at the human gate, and the case resolves. The whole flow in the reviewer UI. (Scripted model.)</em></p>
+
+<p align="center">
   <img src="docs/img/reviewer-ui-trace.jpg" alt="Reviewer UI: a high-risk case waiting for human approval, with the agent trace and draft decision" width="49%">
   <img src="docs/img/reviewer-ui-decision.jpg" alt="Reviewer UI: the approve / reject panel" width="49%">
 </p>
@@ -396,7 +401,7 @@ make api     # terminal 1: API on :8000
 make ui      # terminal 2: reviewer UI on :8501
 ```
 
-`LLM_PROVIDER=fake` (the default in `.env.example`) needs no API key and runs the whole system offline with a scripted model, so decisions are canned and the reviewer always approves. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` in `.env` for real behaviour. The first `make setup` downloads about 1 GB of local embedding and reranker weights.
+`LLM_PROVIDER=fake` (the default in `.env.example`) needs no API key and runs the whole system offline with a scripted model, so decisions are canned and the reviewer always approves. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` in `.env` for real behaviour. The first `make setup` downloads about 1 GB of local embedding and reranker weights, and the first `make api` fetches the reranker again, so allow a minute or two before the API answers.
 
 **Reviewer UI.** Pick a queue (cases awaiting approval come first), open a case, and read the live agent trace and the draft decision and letter. Open cases have **Start dispute**. Cases paused at the human gate have **Approve** and **Reject**. For this local demo the UI signs its own approver token from `JWT_SECRET`; Cognito replaces that in the AWS phase.
 
