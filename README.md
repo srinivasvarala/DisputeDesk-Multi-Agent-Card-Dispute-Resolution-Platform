@@ -67,6 +67,8 @@ DisputeDesk is my answer to *"how do you put LLM agents in a workflow that moves
 
 ## Architecture
 
+A deeper walk through the graph, trust boundaries and design rules is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ```mermaid
 flowchart LR
     UI["<b>Streamlit</b><br/>reviewer UI"]
@@ -456,7 +458,7 @@ src/disputedesk/
 data/policies/       # 15 fictional rulebook documents (reason codes, time limits, evidence standards...)
 evals/               # golden.jsonl (42 cases), retrieval.jsonl (25 questions), Promptfoo red team, thresholds.yml
 infra/               # Postgres init, OTel collector config
-docs/                # THREAT_MODEL.md, adr/ (001-005), img/ (screenshots)
+docs/                # ARCHITECTURE.md, THREAT_MODEL.md, adr/ (001-005), img/ (screenshots)
 tests/               # unit (493) and integration (59, against real Postgres)
 .github/workflows/   # ci.yml, security.yml, evals.yml
 ```
