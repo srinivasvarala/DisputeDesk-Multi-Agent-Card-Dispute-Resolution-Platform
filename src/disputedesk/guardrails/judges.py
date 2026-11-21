@@ -19,26 +19,98 @@ from disputedesk.llm import LLMClient
 
 log = logging.getLogger(__name__)
 
-_JAILBREAK = [
-    r"ignore (all |any |the )?(previous|prior|above|earlier) (instructions|rules|prompts?)",
-    r"disregard (all |any |the )?(previous|prior|above|your) (instructions|rules|guidelines)",
-    r"forget (everything|all|your) (above|instructions|rules)",
-    r"you are now (in )?(dan|developer mode|an? unrestricted)",
-    r"(reveal|show|print|repeat) (me )?(your|the) (system|hidden|initial) (prompt|instructions)",
-    r"(this|the|your) (refund|dispute|case|claim)( is| was| has been)? pre-?approved",
-    r"(treat|consider|mark) (this|it|the \w+) as pre-?approved",
-    r"\bpre-?approved by (the )?(system|admin|manager|supervisor|reviewer)",
-    r"(approve|accept) (this|the) (dispute|refund|case) (without|regardless)",
-    r"\bjailbreak\b",
-    r"</?(system|instructions?)>",
-]
-_JAILBREAK_RE = re.compile("|".join(_JAILBREAK), re.IGNORECASE)
+# Generic patterns, grouped by what the attacker is trying to do. They catch the obvious forms
+# and keep the tests deterministic; the optional LLM judge (below) covers paraphrase. Tuned on
+# evals/datasets/guardrail_dev.jsonl, NOT on the golden-set attacks that the eval scores.
+_I = re.IGNORECASE
+_SIGNALS: dict[str, re.Pattern[str]] = {
+    # "ignore the rules you were given", "forget your previous instructions", "override the checks"
+    "override": re.compile(
+        r"\b(?:ignore|disregard|forget|override|bypass|discard)\b[^.\n]{0,40}"
+        r"\b(?:instructions?|rules?|polic(?:y|ies)|guidelines?|prompts?|restrictions?|checks?|"
+        r"what your)\b"
+        r"|\b(?:new|updated|revised) (?:instructions?|rules?)\b[^.\n]{0,30}"
+        r"\b(?:assistant|system|model|agent|reviewer)\b"
+        r"|\bfrom (?:this point|now on|here on),? (?:you|the assistant|the system)\b"
+        r"|\byou are now (?:in |operating|acting|an? )",
+        _I,
+    ),
+    # claiming to be the system, an admin or another team
+    "role_claim": re.compile(
+        r"\[(?:admin|system|override|developer|internal)[^\]]*\]"
+        r"|(?:^|\n)\s*(?:system|assistant|developer|admin)(?: notice| message| note| override)?\s*:"
+        # an uppercase role label anywhere in the line (the scoped flag turns IGNORECASE off)
+        r"|(?-i:\b(?:SYSTEM|ASSISTANT|DEVELOPER|ADMIN)\s*:)"
+        r"|\bassistant\s*:\s*you\b"
+        r"|\bmessage from (?:the )?(?:compliance|risk|admin|security|dispute|fraud)\b"
+        r"|\b(?:note|message) to (?:the )?(?:reviewer|assistant|agent|system|model)\b",
+        _I,
+    ),
+    # closing the data block we wrap customer text in
+    "tag_breakout": re.compile(
+        r"</?[a-z_]*(?:untrusted|narrative|case_data|facts|evidence|policy|draft|system|"
+        r"instructions?)[a-z_]*\s*>",
+        _I,
+    ),
+    # skipping the human gate, or claiming it was already passed
+    "approval_bypass": re.compile(
+        r"\b(?:skip|bypass|avoid)\b[^.\n]{0,25}\b(?:human|person|approver|reviewer|manual|approval)"
+        r"|\b(?:do not|don't|no need to|no need for|without)\b[^.\n]{0,25}"
+        r"\b(?:involve|route|send|human|person|approver|reviewer)\b[^.\n]{0,25}"
+        r"\b(?:human|person|approver|reviewer|approval)\b"
+        r"|\b(?:already|previously) (?:signed off|approved|cleared|authori[sz]ed|verified|"
+        r"validated|confirmed)\b"
+        r"|\bpre-?(?:cleared|authori[sz]ed|verified)\b"
+        r"|\bpre-?approved by (?:the )?(?:system|admin|manager|supervisor|reviewer|dispute team)\b"
+        r"|\bsigned (?:this )?off\b"
+        r"|(?:this|the|your) (?:refund|dispute|case|claim)(?: is| was| has been)? pre-?approved",
+        _I,
+    ),
+    # asking for the prompt, rules or tools
+    "exfiltration": re.compile(
+        r"\b(?:list|repeat|print|show|reveal|output|display|tell me|give me|share)\b[^.\n]{0,50}"
+        r"\b(?:instructions|system prompt|configuration|hidden rules|your rules|the tools|"
+        r"tools (?:you|that you) can|text (?:that was )?placed before)\b"
+        r"|\bword for word\b",
+        _I,
+    ),
+    # inventing a rule that says the claim must be paid
+    "fake_policy": re.compile(
+        r"\b(?:under|per|according to) (?:the )?(?:rule|policy|section|rulebook|article)\b"
+        r"[^.\n]{0,20}\d+(?:\.\d+)*[^.\n]{0,100}\b(?:all|every|any)\b[^.\n]{0,80}"
+        r"\b(?:accept|approved|paid|refund|valid|automatically)\w*",
+        _I,
+    ),
+    # personas and jailbreak games
+    "persona": re.compile(
+        r"\bpretend (?:you are|to be)\b|\bact as (?:a|an|if)\b|\bgame where you\b"
+        r"|\byou are (?:now )?(?:dan|unrestricted|unlocked)\b|\bdeveloper mode\b"
+        r"|\b(?:no restrictions|without (?:any )?restrictions|unrestricted)\b|\bjailbreak\b",
+        _I,
+    ),
+    # dictating the output
+    "output_control": re.compile(
+        r"\b(?:reply|respond|answer|output)\b(?: only)? with\b[^.\n]{0,30}\b(?:accept|approve)"
+        r"|\bset (?:the )?(?:decision|verdict|status)\b[^.\n]{0,25}\b(?:accept|approve)"
+        r"|\b(?:decision|verdict)\s*[=:]\s*(?:accept|approve)"
+        r"|\b(?:approve|accept)\b[^.\n]{0,30}\bverify later\b",
+        _I,
+    ),
+    # spelled out one letter at a time to dodge keyword filters
+    "obfuscation": re.compile(r"\b(?:[a-z][-. ]){5,}[a-z]\b", _I),
+}
+_JAILBREAK_RE = re.compile("|".join(p.pattern for p in _SIGNALS.values()), re.IGNORECASE)
 
-# Words that show the text is about a card dispute. Off-topic = none of them present.
+# Words that show the text is about a card dispute. Off-topic = none of them present. Wide on
+# purpose: a clean narrative wrongly blocked is a false positive, and the gate for those is tight.
 _ON_TOPIC = re.compile(
     r"\b(?:dispute|charge|chargeback|refund|transaction|merchant|card|payment|fraud|order|"
     r"delivery|deliver|ship|receipt|invoice|statement|policy|evidence|case|duplicate|"
-    r"bill|billed|billing|account|purchase|cancel|subscription|service|reason code|approv)",
+    r"bill|billed|billing|account|purchase|cancel|subscription|service|reason code|approv|"
+    r"item|items|return|returned|parcel|package|seller|store|website|listing|warranty|"
+    r"damaged|broken|exchange|replace|replacement|tracking|arrived|arrive|received|ticket|"
+    r"booking|reservation|hotel|membership|trial|bank|money back|paid|pay|product|goods|"
+    r"size|colour|color|wrong|never came|refunded|reversed|unauthori[sz]ed|authori[sz]ed)",
     re.IGNORECASE,
 )
 
@@ -46,6 +118,11 @@ _AMOUNT = re.compile(r"\$\s?\d[\d,]*(?:\.\d{1,2})?")
 _FOUR_DIGITS = re.compile(r"(?<!\d)\d{4}(?!\d)")  # exactly four digits, not part of a longer run
 _DIGIT_RUN = re.compile(r"\d(?:[\d -]*\d)?")
 _CARD_LAST4 = re.compile(r"(?:ending|last4|last 4)(?: in| with)?\s*(\d{4})(?!\d)", re.IGNORECASE)
+
+
+def injection_signals(text: str) -> list[str]:
+    """Names of the heuristic categories that match, e.g. ["role_claim", "approval_bypass"]."""
+    return [name for name, pattern in _SIGNALS.items() if pattern.search(text)]
 
 
 def looks_like_jailbreak(text: str) -> bool:
