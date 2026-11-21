@@ -16,7 +16,7 @@ Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated a
 | M7.2: Analyst confidence, rule-based escalation, cited letters | ✅ Partly done: gate still red on 3 of 9 | 2026-11-20 | `b73748f`, see git log `feat(agents)` / `docs(evals)` |
 | M7.3: Tools carry the facts the rulebook asks for | ✅ Done; gate red on 3 of 9 (decision accuracy 0.781, just under) | 2026-11-20 | `22bef81`, `b10bb31`, see git log `feat(data)` / `feat(agents)` / `docs(evals)` |
 | M7.4: Input guardrail, demand judge, not-as-described facts | ✅ Done; gate red on 1 of 9 (decision accuracy 0.781, one case short) | 2026-11-21 | `a5e8ecf`, `f0c4b15`, `e99ca59`, `29b0ef4`, `1f3ab44`, `29d1ed7`, `0935b76`, see git log `feat(guardrails)` / `feat(graph)` / `feat(evals)` / `feat(data)` |
-| M8: UI, docs and polish | ✅ Done, except the demo GIF and a clean-clone `make setup` run (see M8 gaps) | 2026-11-20 | `4fabc83`, `2004ee0`, `1d67b59`, `bb787c0`, see git log `docs` / `feat(ui)` / `fix(ui)` / `ci` |
+| M8: UI, docs and polish | ✅ Done (demo GIF recorded and a fresh clone verified end to end on 2026-11-21; `docker compose up` from clean not re-run, see M8 gaps) | 2026-11-20 | `4fabc83`, `2004ee0`, `1d67b59`, `bb787c0`, see git log `docs` / `feat(ui)` / `fix(ui)` / `ci` |
 | M9: AWS deployment (phase 2) | ⏳ Not started | | |
 
 Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
