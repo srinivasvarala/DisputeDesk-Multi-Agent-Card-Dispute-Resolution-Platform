@@ -3,7 +3,10 @@
     make ui     (or: uv run --group ui streamlit run src/disputedesk/ui/app.py)
 
 Needs the API running (`DISPUTEDESK_API_URL`, default http://127.0.0.1:8000). For this local demo
-the UI mints its own approver token from JWT_SECRET; the AWS deployment replaces that with Cognito.
+the UI mints its own tokens from JWT_SECRET, for one of two demo people chosen in the sidebar (an
+analyst and an approver); the AWS deployment replaces that with Cognito. Two people because the
+API does not let whoever started a case approve it (maker-checker): start as the analyst, then
+switch to the approver to decide. The page only mirrors that rule; the API enforces it.
 Everything from the case (letter, rationale) is model output built from customer text, so it is
 shown as plain text and never rendered as markdown or HTML. Only our own constants (node names,
 statuses) go into badge markup.
@@ -12,6 +15,7 @@ statuses) go into badge markup.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 import streamlit as st
 
@@ -20,7 +24,7 @@ from disputedesk.config import get_settings
 from disputedesk.db.models import CaseStatus
 from disputedesk.graph.state import Verdict
 from disputedesk.security.jwt import issue_token
-from disputedesk.security.scopes import Role
+from disputedesk.security.scopes import Role, Scope, scopes_for
 from disputedesk.ui.client import (
     ApiError,
     ReviewerClient,
@@ -36,13 +40,43 @@ API_URL = os.environ.get("DISPUTEDESK_API_URL", "http://127.0.0.1:8000")
 POLL_SECONDS = 3
 
 
+@dataclass(frozen=True)
+class Persona:
+    """A demo person the UI signs requests as. Real sign-in replaces this in the AWS version."""
+
+    label: str
+    sub: str
+    role: Role
+
+    @property
+    def can_approve(self) -> bool:
+        return Scope.DISPUTES_APPROVE in scopes_for(self.role)
+
+
+PERSONAS = {
+    p.label: p
+    for p in (
+        Persona("Maya (analyst)", "demo-analyst-maya", Role.ANALYST),
+        Persona("Ravi (approver)", "demo-approver-ravi", Role.APPROVER),
+    )
+}
+DEFAULT_PERSONA = "Maya (analyst)"
+
+
+def current_persona() -> Persona:
+    return PERSONAS.get(st.session_state.get("persona", DEFAULT_PERSONA), PERSONAS[DEFAULT_PERSONA])
+
+
 @st.cache_resource
 def get_client() -> ReviewerClient:
     settings = get_settings()
-    # One token per request: the process lives longer than a token does.
-    return ReviewerClient(
-        API_URL, lambda: issue_token(settings, sub="reviewer-ui", role=Role.APPROVER)
-    )
+
+    def token() -> str:
+        # One token per request: the process outlives a token, and the person can change.
+        who = current_persona()
+        return issue_token(settings, sub=who.sub, role=who.role)
+
+    return ReviewerClient(API_URL, token)
 
 
 def act_and_rerun(case_id: str) -> None:
@@ -87,6 +121,8 @@ def render_trace(view: DisputeView) -> None:
                 f"manipulation attempt ({view.input_flag}). No agent read it; the case was sent "
                 "to a human."
             )
+        if view.started_by:
+            st.caption(f"Started by {view.started_by}")
         if view.route:
             st.caption(f"Router: {view.route.rationale}")
         if view.revision_count:
@@ -128,17 +164,26 @@ def render_actions(client: ReviewerClient, view: DisputeView) -> None:
     elif view.workflow is WorkflowState.RUNNING:
         st.info("The agents are working on this case. This page updates by itself.")
     elif view.workflow is WorkflowState.AWAITING_APPROVAL:
+        who = current_persona()
         with st.container(border=True):
             st.markdown("##### Your decision")
             st.warning("Policy requires a human to approve this case before it is resolved.")
-            note = st.text_input("Note (optional)", max_chars=1_000, key=f"note-{view.case_id}")
-            approve, reject, _ = st.columns([1, 1, 3])
-            if approve.button("Approve", type="primary", use_container_width=True):
-                client.decide(view.case_id, approved=True, note=note)
-                act_and_rerun(view.case_id)
-            if reject.button("Reject", use_container_width=True):
-                client.decide(view.case_id, approved=False, note=note)
-                act_and_rerun(view.case_id)
+            if not who.can_approve:
+                st.info(f"You are {who.label}. An approver has to decide: switch in the sidebar.")
+            elif view.started_by == who.sub:
+                st.info(
+                    "You started this case, so someone else has to decide it (maker-checker). "
+                    "Switch to a different person in the sidebar."
+                )
+            else:
+                note = st.text_input("Note (optional)", max_chars=1_000, key=f"note-{view.case_id}")
+                approve, reject, _ = st.columns([1, 1, 3])
+                if approve.button("Approve", type="primary", use_container_width=True):
+                    client.decide(view.case_id, approved=True, note=note)
+                    act_and_rerun(view.case_id)
+                if reject.button("Reject", use_container_width=True):
+                    client.decide(view.case_id, approved=False, note=note)
+                    act_and_rerun(view.case_id)
     elif view.workflow is WorkflowState.FAILED:
         st.error("The workflow failed and the case was escalated to a human.")
     elif view.case_status is CaseStatus.ESCALATED:
@@ -195,6 +240,7 @@ def sidebar(client: ReviewerClient) -> tuple[str | None, dict[str, CaseSummary]]
     with st.sidebar:
         st.markdown("### DisputeDesk")
         st.caption("Card dispute review")
+        st.selectbox("Acting as", list(PERSONAS), key="persona", index=0)
         statuses = [CaseStatus.PENDING_APPROVAL]
         statuses += [s for s in CaseStatus if s is not CaseStatus.PENDING_APPROVAL]
         choice = st.selectbox(
