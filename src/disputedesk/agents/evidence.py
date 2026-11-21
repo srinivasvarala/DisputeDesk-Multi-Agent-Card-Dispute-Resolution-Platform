@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from disputedesk.agents import allowlists
 from disputedesk.agents.common import DecisionAuditor, complete_json, untrusted
 from disputedesk.agents.toolbox import ToolBox
-from disputedesk.db.models import AuditOutcome, Merchant, ReasonCode, Transaction
+from disputedesk.db.models import Merchant, ReasonCode, Transaction
 from disputedesk.graph import rules
 from disputedesk.graph.state import CaseFacts, Evidence, Leaning, Route
 from disputedesk.llm import LLMClient
@@ -94,14 +94,7 @@ class EvidenceAgent:
                 schema=_Assessment,
             )
         except Exception as exc:
-            self._audit.record(
-                DECISION_TOOL,
-                case_id,
-                {},
-                outcome=AuditOutcome.ERROR,
-                error=str(exc),
-                started=started,
-            )
+            self._audit.record_failure(DECISION_TOOL, case_id, {}, exc, started=started)
             raise
         self._audit.record(DECISION_TOOL, case_id, {"leaning": assessment.leaning}, started=started)
         return Evidence(summary=assessment.summary, leaning=assessment.leaning, **collected)

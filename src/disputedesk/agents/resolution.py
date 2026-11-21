@@ -23,7 +23,7 @@ from disputedesk.agents.common import (
 )
 from disputedesk.agents.policy import PolicyAnswer
 from disputedesk.agents.toolbox import ToolBox
-from disputedesk.db.models import AuditOutcome, CaseDraft, Decision, ReasonCode
+from disputedesk.db.models import CaseDraft, Decision, ReasonCode
 from disputedesk.graph import rules
 from disputedesk.graph.state import CaseFacts, Evidence, ResolutionDraft, Review, Route
 from disputedesk.llm import LLMClient
@@ -124,13 +124,8 @@ class ResolutionAgent:
                 )
             )
         except Exception as exc:
-            self._audit.record(
-                DECISION_TOOL,
-                case_id,
-                {"revision": previous is not None},
-                outcome=AuditOutcome.ERROR,
-                error=str(exc),
-                started=started,
+            self._audit.record_failure(
+                DECISION_TOOL, case_id, {"revision": previous is not None}, exc, started=started
             )
             raise
         self._audit.record(

@@ -188,7 +188,8 @@ class Runtime:
                 try:
                     result = self.graph.invoke(graph_input, _config(case_id))
                 except Exception as exc:
-                    span.record_exception(exc)
+                    # Type only: the message can echo the model's reply, and so the narrative.
+                    span.set_attribute("error.type", type(exc).__name__)
                     span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
                     logger.exception("workflow failed for %s", case_id)
                     self._fail(case_id, exc)

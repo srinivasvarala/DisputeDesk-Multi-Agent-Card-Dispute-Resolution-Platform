@@ -216,7 +216,7 @@ def test_no_matching_excerpts_fails_without_calling_the_llm() -> None:
     search, decision = audit.entries
     assert search.outcome == AuditOutcome.OK
     assert decision.outcome == AuditOutcome.ERROR
-    assert "no policy excerpts" in (decision.error or "")
+    assert decision.error == "PolicyAgentError"  # the type only: the audit log is append-only
 
 
 @pytest.mark.parametrize(
@@ -241,7 +241,7 @@ def test_rejected_answer_is_audited_as_an_error_decision() -> None:
     with pytest.raises(PolicyAgentError):
         agent.answer("limit?")
     assert [e.outcome for e in audit.entries] == [AuditOutcome.OK, AuditOutcome.ERROR]
-    assert "after 2 attempts" in (audit.entries[1].error or "")
+    assert audit.entries[1].error == "PolicyAgentError"
 
 
 class BrokenAudit:

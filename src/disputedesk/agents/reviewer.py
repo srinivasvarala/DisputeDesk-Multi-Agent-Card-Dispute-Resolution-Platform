@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from disputedesk.agents import allowlists
 from disputedesk.agents.common import DecisionAuditor, complete_json, untrusted
 from disputedesk.agents.policy import PolicyAnswer
-from disputedesk.db.models import AuditOutcome
 from disputedesk.graph.state import CaseFacts, Evidence, ResolutionDraft, Review, Verdict
 from disputedesk.llm import LLMClient
 
@@ -73,13 +72,8 @@ class ReviewerAgent:
                 check=_needs_feedback,
             )
         except Exception as exc:
-            self._audit.record(
-                DECISION_TOOL,
-                case_id,
-                {"version": draft.version},
-                outcome=AuditOutcome.ERROR,
-                error=str(exc),
-                started=started,
+            self._audit.record_failure(
+                DECISION_TOOL, case_id, {"version": draft.version}, exc, started=started
             )
             raise
         self._audit.record(

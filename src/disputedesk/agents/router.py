@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from disputedesk.agents import allowlists
 from disputedesk.agents.common import DecisionAuditor, complete_json, untrusted
 from disputedesk.agents.toolbox import ToolBox
-from disputedesk.db.models import AuditOutcome, Merchant, ReasonCode
+from disputedesk.db.models import Merchant, ReasonCode
 from disputedesk.graph import rules
 from disputedesk.graph.state import CaseFacts, Route
 from disputedesk.llm import LLMClient
@@ -69,14 +69,7 @@ class RouterAgent:
                 schema=_Classification,
             )
         except Exception as exc:
-            self._audit.record(
-                DECISION_TOOL,
-                case_id,
-                {},
-                outcome=AuditOutcome.ERROR,
-                error=str(exc),
-                started=started,
-            )
+            self._audit.record_failure(DECISION_TOOL, case_id, {}, exc, started=started)
             raise
         tier = rules.risk_tier(
             amount_cents=facts.amount_cents,

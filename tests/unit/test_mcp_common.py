@@ -57,15 +57,29 @@ async def test_success_is_audited_with_actor_and_case(
 
 
 @pytest.mark.parametrize(
-    ("tool", "args", "outcome", "message"),
+    ("tool", "args", "outcome", "message", "audited"),
     [
-        ("echo", {"case_id": "nope"}, AuditOutcome.INVALID_INPUT, "pattern"),
-        ("echo", {}, AuditOutcome.INVALID_INPUT, "Field required"),
-        ("echo", {"case_id": "case_0001", "x": 1}, AuditOutcome.INVALID_INPUT, "unknown argument"),
-        ("missing", {}, AuditOutcome.INVALID_INPUT, "Unknown tool"),
-        ("echo", {"case_id": "case_0404"}, AuditOutcome.NOT_FOUND, "not found"),
-        ("echo", {"case_id": "case_0409"}, AuditOutcome.CONFLICT, "not allowed"),
-        ("echo", {"case_id": "case_0500"}, AuditOutcome.ERROR, "Error executing tool echo"),
+        # `message` is what the client sees; `audited` is what the append-only row keeps: our
+        # own messages, or exception types only (a validation error echoes the bad value).
+        ("echo", {"case_id": "nope"}, AuditOutcome.INVALID_INPUT, "pattern", "ValidationError"),
+        ("echo", {}, AuditOutcome.INVALID_INPUT, "Field required", "ValidationError"),
+        (
+            "echo",
+            {"case_id": "case_0001", "x": 1},
+            AuditOutcome.INVALID_INPUT,
+            "unknown argument",
+            "unknown argument",
+        ),
+        ("missing", {}, AuditOutcome.INVALID_INPUT, "Unknown tool", "ToolError"),
+        ("echo", {"case_id": "case_0404"}, AuditOutcome.NOT_FOUND, "not found", "not found"),
+        ("echo", {"case_id": "case_0409"}, AuditOutcome.CONFLICT, "not allowed", "not allowed"),
+        (
+            "echo",
+            {"case_id": "case_0500"},
+            AuditOutcome.ERROR,
+            "Error executing tool echo",
+            "RuntimeError",
+        ),
     ],
 )
 async def test_failures_are_audited(
@@ -75,20 +89,36 @@ async def test_failures_are_audited(
     args: dict[str, object],
     outcome: AuditOutcome,
     message: str,
+    audited: str,
 ) -> None:
     assert message in error_text(await call(server, tool, args))
     entry = last_audit(store)
     assert entry.outcome == outcome
     assert entry.tool == tool
-    assert entry.error and message in entry.error
+    assert entry.error and audited in entry.error
     assert len(store.audit) == 1
 
 
-async def test_crash_details_reach_audit_but_not_client(
+async def test_a_rejected_value_is_not_copied_into_the_audit_error(
     server: AuditedMCPServer, store: InMemoryStore
 ) -> None:
-    assert "boom" not in error_text(await call(server, "echo", {"case_id": "case_0500"}))
-    assert "boom" in (last_audit(store).error or "")
+    """A validation error echoes the bad value. The row is append-only, so its error must not.
+
+    (The row's `arguments` are stored as sent; see PROGRESS.md, M10 known gaps.)"""
+    canary = "CANARY-letter-text"
+    await call(server, "echo", {"case_id": canary})
+    entry = last_audit(store)
+    assert entry.outcome == AuditOutcome.INVALID_INPUT
+    assert canary not in (entry.error or "")
+
+
+async def test_crash_details_reach_the_log_but_neither_client_nor_audit(
+    server: AuditedMCPServer, store: InMemoryStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("ERROR"):
+        assert "boom" not in error_text(await call(server, "echo", {"case_id": "case_0500"}))
+    assert "boom" not in (last_audit(store).error or "")  # the row is append-only
+    assert "boom" in caplog.text  # the detail is in the application log
 
 
 async def test_audit_failure_fails_the_call_with_generic_message() -> None:

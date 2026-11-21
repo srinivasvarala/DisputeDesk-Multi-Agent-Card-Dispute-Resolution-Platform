@@ -135,6 +135,8 @@ class AuditedMCPServer(MCPServer):
             raise
         except Exception as exc:
             outcome, error = classify(exc), describe(exc)
+            if outcome == AuditOutcome.ERROR:  # the audit row keeps types only: detail goes here
+                logger.exception("tool %s.%s crashed", call.server, name)
             raise
         finally:
             _current_call.reset(token)
@@ -210,12 +212,29 @@ def classify(exc: BaseException) -> AuditOutcome:
     return AuditOutcome.ERROR
 
 
+_OWN_ERRORS = (
+    InvalidRequestError,
+    NotFoundError,
+    ConflictError,
+    PermissionDeniedError,
+    AuditUnavailableError,
+)
+
+
 def describe(exc: BaseException) -> str:
-    """Error text for the audit row. Crash details stay server-side (the client sees less)."""
-    text = str(exc)
-    if isinstance(exc, UnexpectedToolError) and exc.__cause__ is not None:
-        text = f"{text}: {exc.__cause__!r}"
-    return text[:_MAX_ERROR_CHARS]
+    """Error text for the audit row, which is append-only: nothing in it may be customer text.
+
+    Our own errors carry messages we wrote, so those are kept. Anything else is recorded as
+    exception types only: a pydantic validation error echoes the offending value (a letter, a
+    narrative), and a crash carries whatever the code was holding. Detail stays in the log.
+    """
+    for err in (exc, exc.__cause__):
+        if isinstance(err, _OWN_ERRORS):
+            return str(err)[:_MAX_ERROR_CHARS]
+    cause = exc.__cause__
+    if cause is None:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {type(cause).__name__}"
 
 
 def _actor(context: Context[Any, Any] | None) -> str:

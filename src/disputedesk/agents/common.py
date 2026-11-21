@@ -125,3 +125,27 @@ class DecisionAuditor:
                 created_at=self._clock(),
             )
         )
+
+    def record_failure(
+        self,
+        tool: str,
+        case_id: str,
+        arguments: dict[str, Any],
+        exc: BaseException,
+        *,
+        started: float | None = None,
+    ) -> None:
+        """Audit a failed decision. Only the exception TYPE is stored.
+
+        The audit log is append-only, and an agent error message can carry the model's reply
+        (a schema error echoes the offending value), which can echo the cardholder's narrative.
+        The detail is in the application log, which the caller writes when it re-raises.
+        """
+        self.record(
+            tool,
+            case_id,
+            arguments,
+            outcome=AuditOutcome.ERROR,
+            error=type(exc).__name__,
+            started=started,
+        )

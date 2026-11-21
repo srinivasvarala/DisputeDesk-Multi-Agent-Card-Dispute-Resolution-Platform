@@ -203,7 +203,7 @@ class PolicyAgent:
                 case_id,
                 {"question": question},
                 AuditOutcome.ERROR,
-                str(exc),
+                type(exc).__name__,  # type only: the message can carry the model's reply
                 started,
             )
             raise
@@ -253,10 +253,10 @@ class PolicyAgent:
         try:
             return self._retriever.search(question, k=self._k)
         except ValueError as exc:
-            outcome, error = AuditOutcome.INVALID_INPUT, str(exc)
+            outcome, error = AuditOutcome.INVALID_INPUT, type(exc).__name__
             raise PolicyAgentError(f"invalid question: {exc}") from exc
         except RetrieverError as exc:
-            outcome, error = AuditOutcome.ERROR, str(exc)
+            outcome, error = AuditOutcome.ERROR, type(exc).__name__
             raise PolicyAgentError(f"policy search failed: {exc}") from exc
         except BaseException as exc:
             outcome, error = AuditOutcome.ERROR, type(exc).__name__
