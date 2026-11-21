@@ -37,6 +37,7 @@ from disputedesk.db.models import AuditOutcome, CaseStatus
 from disputedesk.graph.builder import build_graph
 from disputedesk.graph.serde import checkpoint_serde
 from disputedesk.graph.state import DisputeState
+from disputedesk.graph.system_nodes import InputCheck
 from disputedesk.graph.wiring import Dependencies, build_nodes
 from disputedesk.llm import FakeClient, LLMClient, get_embedder, get_llm, get_reranker
 from disputedesk.mcp_servers.cases import server as cases_server
@@ -117,6 +118,7 @@ class Runtime:
             draft=state.draft,
             review=state.review,
             revision_count=state.revision_count,
+            input_flag=state.input_flag,
             path=state.path,
         )
 
@@ -281,6 +283,7 @@ def build_runtime(
     store: FullStore,
     checkpointer: BaseCheckpointSaver[Any] | None,
     langfuse: Any | None = None,
+    input_check: InputCheck | None = None,
 ) -> Runtime:
     issuer = CredentialIssuer(settings)  # raises if JWT_SECRET is missing or weak
     verifier = CredentialVerifier(settings)
@@ -297,6 +300,7 @@ def build_runtime(
         audit=store,
         langfuse=langfuse,
         issuer=issuer,
+        input_check=input_check,
     )
     graph = build_graph(build_nodes(deps), checkpointer)
     failure_tools = ToolBox(

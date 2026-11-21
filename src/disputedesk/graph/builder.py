@@ -6,6 +6,7 @@
     reviewer approve -> finalize                        (low risk)
                      -> request_approval -> human_gate  (approval required) -> finalize
     revisions exhausted, an escalate draft, or a human "no" -> escalate
+    intake blocked the narrative (input guardrail)          -> escalate, no agent reads it
 
 Nodes are injected (`Nodes`) so the skeleton can run on stubs and tests can swap any one node.
 `human_gate` is the only place that pauses: it calls `interrupt()`, so the run stops at a
@@ -22,7 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
-from disputedesk.graph.routing import after_human, after_resolution, after_review
+from disputedesk.graph.routing import after_human, after_intake, after_resolution, after_review
 from disputedesk.graph.state import DisputeState, HumanDecision
 from disputedesk.observability.otel import agent_span, set_risk_tier
 
@@ -100,7 +101,7 @@ def build_graph(
     graph.add_node("human_gate", human_gate)
 
     graph.add_edge(START, "intake")
-    graph.add_edge("intake", "router")
+    graph.add_conditional_edges("intake", after_intake, ["router", "escalate"])
     graph.add_edge("router", "evidence")
     graph.add_edge("evidence", "policy")
     graph.add_edge("policy", "resolution")

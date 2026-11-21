@@ -10,6 +10,10 @@ Three layers are checked:
 1. structure: injected text only ever appears inside labelled, escaped blocks, in every prompt;
 2. outcome: the decision with the injection equals the decision without it;
 3. backstop: the plain-Python approval rule still pauses a high-risk case for a human.
+
+These are the layers BELOW the input guardrail. The intake guard would block these obvious
+payloads before any agent read them (see test_input_guard.py), so here it is switched off, as if
+a cleverer payload had slipped past it. Defence in depth only counts if each layer holds alone.
 """
 
 import json
@@ -94,6 +98,19 @@ def run_case(
     runtime.claim_start(case_id)
     runtime.run(case_id)
     return runtime, model, store
+
+
+@pytest.fixture(autouse=True)
+def input_guard_missed_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulate a payload the input rail did not catch."""
+    from disputedesk.graph import system_nodes
+    from disputedesk.guardrails.interface import Action, Verdict
+
+    monkeypatch.setattr(
+        system_nodes,
+        "check_input",
+        lambda text, **_: Verdict(action=Action.ALLOW, text=text),
+    )
 
 
 @pytest.fixture

@@ -23,7 +23,7 @@ from disputedesk.agents.toolbox import ToolBox, tool_index
 from disputedesk.config import Settings
 from disputedesk.graph.builder import Nodes, Update
 from disputedesk.graph.state import DisputeState, Verdict
-from disputedesk.graph.system_nodes import WorkflowSteps
+from disputedesk.graph.system_nodes import InputCheck, WorkflowSteps
 from disputedesk.llm import LLMClient
 from disputedesk.mcp_servers.common.store import AuditSink
 from disputedesk.observability.langfuse import TracedLLM
@@ -40,6 +40,7 @@ class Dependencies:
     langfuse: Any | None = None  # Langfuse client, None = LLM calls only traced in OTel
     issuer: CredentialIssuer | None = None  # None: tool calls carry no credential (tests)
     clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+    input_check: InputCheck | None = None  # None = the real input guardrail
 
 
 def build_nodes(deps: Dependencies) -> Nodes:
@@ -65,7 +66,7 @@ def build_nodes(deps: Dependencies) -> Nodes:
     def auditor(agent: str) -> DecisionAuditor:
         return DecisionAuditor(deps.audit, agent, deps.clock)
 
-    steps = WorkflowSteps(box(allowlists.SYSTEM))
+    steps = WorkflowSteps(box(allowlists.SYSTEM), deps.audit, deps.input_check)
     router = RouterAgent(
         llm,
         box(allowlists.ROUTER),

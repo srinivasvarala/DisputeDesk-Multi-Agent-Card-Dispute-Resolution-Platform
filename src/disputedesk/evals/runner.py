@@ -36,7 +36,7 @@ from disputedesk.evals.golden import DEFAULT_GOLDEN, GoldenCase, World, build_wo
 from disputedesk.evals.judge import LetterGrade, grade_letter
 from disputedesk.graph.serde import checkpoint_serde
 from disputedesk.graph.state import DisputeState
-from disputedesk.guardrails.interface import Action, check_input
+from disputedesk.guardrails.interface import Action, Verdict, check_input
 from disputedesk.llm import LLMClient, LLMResponse, Message, get_embedder, get_llm, get_reranker
 from disputedesk.rag.ingest import load_corpus
 from disputedesk.rag.retriever import Retriever
@@ -87,6 +87,7 @@ class CaseRow(BaseModel):
     faithfulness: float | None = None
     faithfulness_error: str | None = None
     injection_passed: bool | None = None
+    injection_passed_rail_off: bool | None = None  # same case with the input rail switched off
     notes: list[str] = Field(default_factory=list)
 
 
@@ -150,13 +151,24 @@ def run_case(runtime: Runtime, world: World, case: GoldenCase) -> m.CaseOutcome:
         policy_summary=state.policy.summary if state.policy else None,
         rationale=state.draft.rationale if state.draft else None,
         letter=state.draft.letter if state.draft else None,
+        input_flag=state.input_flag,
         evidence=evidence_facts(state),
         error=None if view.workflow != "failed" else "workflow failed (case was escalated)",
     )
 
 
+def allow_everything(text: str, **_: object) -> Verdict:
+    """An input rail that misses everything, to measure the layers below it."""
+    return Verdict(action=Action.ALLOW, text=text)
+
+
 def run_graph(
-    cases: Sequence[GoldenCase], settings: Settings, llm: LLMClient, workers: int
+    cases: Sequence[GoldenCase],
+    settings: Settings,
+    llm: LLMClient,
+    workers: int,
+    *,
+    input_rail: bool = True,
 ) -> tuple[dict[str, m.CaseOutcome], World]:
     now = datetime.now(UTC)
     world = build_world(list(cases), now)
@@ -168,6 +180,7 @@ def run_graph(
             retriever=retriever,
             store=world.store,
             checkpointer=InMemorySaver(serde=checkpoint_serde()),
+            input_check=None if input_rail else allow_everything,
         )
         done = 0
 
@@ -310,6 +323,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"could not run the graph: {type(exc).__name__}: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
+    # The input rail now stops most attacks before any agent reads them, which would hide whether
+    # the layers below it hold. Run the adversarial cases again with the rail off to measure that.
+    adversarial = [c for c in cases if c.kind == "adversarial"]
+    rail_off: dict[str, m.CaseOutcome] = {}
+    if adversarial:
+        print("Re-running the adversarial cases with the input rail off ...", file=sys.stderr)
+        try:
+            rail_off, _ = run_graph(adversarial, settings, meter, args.workers, input_rail=False)
+        except Exception as exc:
+            print(f"rail-off run failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+
     print("Checking guardrails ...", file=sys.stderr)
     actions = run_guardrails(cases)
     print("Grading letters ...", file=sys.stderr)
@@ -328,6 +352,15 @@ def main(argv: list[str] | None = None) -> int:
     faith_errors = [k for k, (s, _) in faith.items() if s is None]
     results = [fn(cases, outcomes) for fn in m.DETERMINISTIC]
     results += m.guardrail_metrics(cases, actions)
+    if rail_off:
+        results.append(
+            m.injection_pass_rate(
+                adversarial,
+                rail_off,
+                name="injection_pass_rate_rail_off",
+                note="same check with the input rail off: do the layers below it hold? (not gated)",
+            )
+        )
     letter_metric = m.mean_metric("letter_quality_mean", scored, "1-5 rubric mean")
     faith_metric = m.mean_metric("citation_faithfulness", faith_scores, "DeepEval")
     # A grading or scoring failure must not improve the average by shrinking the sample:
@@ -368,6 +401,9 @@ def main(argv: list[str] | None = None) -> int:
                 faithfulness=f_score,
                 faithfulness_error=f_err,
                 injection_passed=m.injection_passed(c, o) if c.kind == "adversarial" else None,
+                injection_passed_rail_off=(
+                    m.injection_passed(c, rail_off.get(c.id)) if c.id in rail_off else None
+                ),
             )
         )
     args.out_dir.mkdir(parents=True, exist_ok=True)

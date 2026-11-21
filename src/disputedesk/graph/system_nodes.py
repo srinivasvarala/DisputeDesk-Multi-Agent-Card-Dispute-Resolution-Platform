@@ -6,15 +6,32 @@ is validated by the workflow state machine and audited by the server.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from disputedesk.agents import allowlists
 from disputedesk.agents.toolbox import ToolBox
 from disputedesk.db.models import CaseStatus, Decision
 from disputedesk.graph.builder import Update
 from disputedesk.graph.state import MAX_REVISIONS, CaseFacts, DisputeState
+from disputedesk.guardrails.interface import Action, Verdict, check_input
+from disputedesk.mcp_servers.common.store import AuditSink
+
+InputCheck = Callable[..., Verdict]
 
 
 class WorkflowSteps:
-    def __init__(self, tools: ToolBox) -> None:
+    def __init__(
+        self,
+        tools: ToolBox,
+        audit: AuditSink | None = None,
+        input_check: InputCheck | None = None,
+    ) -> None:
         self._tools = tools
+        self._audit = audit
+        # None = the real guardrail. Evals pass an allow-all check to measure what the layers
+        # below the input rail do when it misses; it is looked up at call time so tests can
+        # also replace `check_input` on this module.
+        self._input_check = input_check
 
     def intake(self, state: DisputeState) -> Update:
         """Load the case and move it open -> in_review (skipped if already past `open`)."""
@@ -22,17 +39,28 @@ class WorkflowSteps:
         case = view["case"]
         if case["status"] == CaseStatus.OPEN:
             self._set_status(state.case_id, CaseStatus.IN_REVIEW, "workflow started")
+        # The narrative is customer-written, so it is checked before any agent reads it. A block
+        # sends the case to a human; a redaction means the agents only ever see the clean text.
+        verdict = (self._input_check or check_input)(
+            case["customer_narrative"],
+            agent=allowlists.SYSTEM,
+            case_id=state.case_id,
+            audit=self._audit,
+        )
+        narrative = verdict.text if verdict.action == Action.REDACT else case["customer_narrative"]
         facts = CaseFacts(
             txn_id=case["txn_id"],
             customer_id=case["customer_id"],
             amount_cents=case["amount_cents"],
             claimed_reason=case["reason_code"],
-            narrative=case["customer_narrative"],
+            narrative=narrative or "",
             filed_at=case.get("opened_at"),
             fraud_declaration_signed=case.get("fraud_declaration_signed"),
             card_reissued=case.get("card_reissued"),
             card_reported_lost_at=case.get("card_reported_lost_at"),
         )
+        if verdict.action == Action.BLOCK:
+            return {"facts": facts, "input_flag": verdict.rail or "input guardrail"}
         return {"facts": facts}
 
     def request_approval(self, state: DisputeState) -> Update:
@@ -62,6 +90,8 @@ class WorkflowSteps:
 
 
 def escalation_reason(state: DisputeState) -> str:
+    if state.input_flag is not None:
+        return f"input guardrail flagged the narrative ({state.input_flag}); referred to a human"
     if state.human is not None and not state.human.approved:
         return f"human reviewer {state.human.approver} did not approve: {state.human.note}"[:1000]
     if state.draft is not None and state.draft.decision == Decision.ESCALATE:

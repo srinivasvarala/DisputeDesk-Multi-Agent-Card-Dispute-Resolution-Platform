@@ -7,9 +7,15 @@ from typing import Literal
 from disputedesk.db.models import Decision
 from disputedesk.graph.state import MAX_REVISIONS, DisputeState, Verdict
 
+AfterIntake = Literal["router", "escalate"]
 AfterResolution = Literal["reviewer", "escalate"]
 AfterReview = Literal["resolution", "request_approval", "finalize", "escalate"]
 AfterHuman = Literal["finalize", "escalate"]
+
+
+def after_intake(state: DisputeState) -> AfterIntake:
+    """A narrative the input guardrail blocked goes straight to a human, unread by any agent."""
+    return "escalate" if state.input_flag is not None else "router"
 
 
 def after_resolution(state: DisputeState) -> AfterResolution:

@@ -40,6 +40,9 @@ class DisputeView(BaseModel):
     draft: ResolutionDraft | None = None
     review: Review | None = None
     revision_count: int = 0
+    input_flag: str | None = Field(
+        default=None, description="Input guardrail rail that sent the case to a human, if any"
+    )
     path: list[str] = Field(default_factory=list, description="Graph nodes visited, in order")
 
 

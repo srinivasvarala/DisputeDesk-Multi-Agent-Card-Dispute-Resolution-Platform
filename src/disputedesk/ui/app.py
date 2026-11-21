@@ -81,6 +81,12 @@ def render_trace(view: DisputeView) -> None:
             st.markdown(chips)
         else:
             st.caption("Running, no steps recorded yet.")
+        if view.input_flag:
+            st.warning(
+                "The input guardrail flagged the cardholder's narrative as a possible "
+                f"manipulation attempt ({view.input_flag}). No agent read it; the case was sent "
+                "to a human."
+            )
         if view.route:
             st.caption(f"Router: {view.route.rationale}")
         if view.revision_count:

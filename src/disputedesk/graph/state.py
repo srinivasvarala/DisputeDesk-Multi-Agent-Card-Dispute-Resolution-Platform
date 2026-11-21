@@ -106,4 +106,7 @@ class DisputeState(BaseModel):
     revision_count: int = Field(default=0, ge=0)
     human: HumanDecision | None = None
     final_status: CaseStatus | None = None
+    # Set at intake when the input guardrail blocks the narrative: the case goes straight to a
+    # human and no agent reads the text. Holds the rail that fired, never the text itself.
+    input_flag: str | None = None
     path: list[str] = Field(default_factory=list, description="Nodes visited, in order")
