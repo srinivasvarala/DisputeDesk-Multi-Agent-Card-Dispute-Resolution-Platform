@@ -28,7 +28,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       # `uvx pip-audit` alone would audit pip-audit's own environment, not ours, so audit the
       # exact locked versions. The spaCy model is a URL requirement and cannot be audited.
-      - run: uv export --frozen --no-hashes --no-emit-project -o requirements-audit.txt
+      # Shipped dependencies only (--no-dev). virtualenv comes in through pre-commit, a dev tool;
+      # its fixed release needs packaging>=26.3, which langfuse 2.x (packaging<25) rules out.
+      # Revisit when langfuse is upgraded.
+      - run: uv export --frozen --no-hashes --no-emit-project --no-dev -o requirements-audit.txt
       - run: uvx pip-audit -r requirements-audit.txt --no-deps --disable-pip
 
   container-scan:

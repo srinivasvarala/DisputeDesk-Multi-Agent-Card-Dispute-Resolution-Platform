@@ -500,6 +500,10 @@ Six findings; three fixed in `fix(agents)`: (1) an empty `EVAL_JUDGE_MODEL` / `E
 ### Code review follow-ups (fixed)
 API errors during a poll tick or a button click were not caught (fragment reruns skip the page-level handler); the case was fetched twice per run and the case list twice per page load; a note typed for one case could be sent against another; `make setup` skipped the JWT secret when `.env` had no `JWT_SECRET` line (now `scripts/ensure_jwt_secret.sh`). The UI also mints a fresh token per request (the cached one expired after 60 minutes). Streamlit page tests (`tests/unit/test_ui_app.py`) skip where the `ui` group is not installed, so CI does not run them.
 
+### CI follow-ups after the M8 push
+- CI now installs the `evals` and `ui` groups, so mypy can import deepeval and streamlit.
+- The `pip-audit` job audits shipped dependencies only (`--no-dev`), decided with the user: it failed on 13 advisories in `virtualenv`, which only `pre-commit` (a dev tool) pulls in, and its fixed release needs `packaging>=26.3` while langfuse 2.x requires `packaging<25`. Dev tools are therefore not audited until langfuse is upgraded.
+
 ### Known gaps
 - `make setup` from a clean clone not run. No demo GIF saved (13 frames were recorded in the browser but not exported).
 - The approval note is sent to the API but not stored in the audit row (only role and approved are); the UI label no longer claims it is.
