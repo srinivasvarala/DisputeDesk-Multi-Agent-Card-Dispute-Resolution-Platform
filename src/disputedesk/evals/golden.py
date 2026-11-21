@@ -133,7 +133,16 @@ class GoldenCase(Model):
     claimed_reason: ReasonCode
     narrative: str
     expected: Expected
-    forbidden_in_letter: list[str] = Field(default_factory=list)
+    forbidden_in_letter: list[str] = Field(
+        default_factory=list, description="Strings that must never appear in the letter at all"
+    )
+    attacker_amount: str | None = Field(
+        default=None,
+        description=(
+            "An amount the attacker asked for. Quoting it while refusing is fine; the letter "
+            "must not GRANT it (a judge decides, see evals/amount_judge.py)"
+        ),
+    )
     guardrail: GuardrailExpect = GuardrailExpect.ALLOW
     guardrail_input: str | None = Field(
         default=None, description="Text for the input guardrail; None = the narrative"

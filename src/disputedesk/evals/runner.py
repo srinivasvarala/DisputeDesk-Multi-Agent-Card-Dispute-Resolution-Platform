@@ -32,6 +32,7 @@ from disputedesk.api.runtime import Runtime, WorkflowConflictError, build_runtim
 from disputedesk.config import Settings, get_settings
 from disputedesk.db import connect
 from disputedesk.evals import metrics as m
+from disputedesk.evals.amount_judge import grants_amount
 from disputedesk.evals.golden import DEFAULT_GOLDEN, GoldenCase, World, build_world, load_golden
 from disputedesk.evals.judge import LetterGrade, grade_letter
 from disputedesk.graph.serde import checkpoint_serde
@@ -225,6 +226,29 @@ def run_letter_grades(
     return graded
 
 
+def run_amount_checks(
+    judge: LLMClient, cases: Sequence[GoldenCase], outcomes: dict[str, m.CaseOutcome]
+) -> dict[str, bool]:
+    """For cases where the attacker asked for an amount: did the letter GRANT it? A case with no
+    letter granted nothing. A case the judge could not read is left out, and then counts as not
+    resisted (see `metrics.injection_passed`)."""
+    grants: dict[str, bool] = {}
+    for c in cases:
+        if c.attacker_amount is None:
+            continue
+        o = outcomes.get(c.id)
+        if o is None:
+            continue
+        if o.letter is None:
+            grants[c.id] = False
+            continue
+        try:
+            grants[c.id] = grants_amount(judge, o.letter, c.attacker_amount).commits
+        except Exception as exc:
+            print(f"  amount check failed for {c.id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+    return grants
+
+
 def cited_context(settings: Settings) -> dict[tuple[str, str], str]:
     out: dict[tuple[str, str], list[str]] = {}
     for chunk in load_corpus(Path(settings.policies_dir)):
@@ -260,7 +284,9 @@ def run_faithfulness(
 
 
 def expectation_misses(
-    cases: Sequence[GoldenCase], outcomes: dict[str, m.CaseOutcome]
+    cases: Sequence[GoldenCase],
+    outcomes: dict[str, m.CaseOutcome],
+    grants: dict[str, bool] | None = None,
 ) -> list[str]:
     misses: list[str] = []
     for c in cases:
@@ -273,7 +299,7 @@ def expectation_misses(
             problems.append(f"reason {o.reason_code} (expected {c.expected.reason_code})")
         if c.kind == "normal" and o.decision != c.expected.decision:
             problems.append(f"decision {o.decision} (expected {c.expected.decision})")
-        if c.kind == "adversarial" and not m.injection_passed(c, o):
+        if c.kind == "adversarial" and not m.injection_passed(c, o, grants):
             problems.append(
                 f"not resisted: decision {o.decision} (ok: "
                 f"{sorted(str(d) for d in c.expected.decisions)}), "
@@ -338,6 +364,8 @@ def main(argv: list[str] | None = None) -> int:
     actions = run_guardrails(cases)
     print("Grading letters ...", file=sys.stderr)
     grades = run_letter_grades(judge_meter, cases, outcomes)
+    grants = run_amount_checks(judge_meter, cases, outcomes)
+    grants_off = run_amount_checks(judge_meter, adversarial, rail_off)
     faith: dict[str, tuple[float | None, str | None]] = {}
     if not args.skip_faithfulness:
         print("Scoring citation faithfulness (DeepEval) ...", file=sys.stderr)
@@ -350,7 +378,8 @@ def main(argv: list[str] | None = None) -> int:
     ungraded = [k for k, v in grades.items() if isinstance(v, str)]
     faith_scores = [s for s, _ in faith.values() if s is not None]
     faith_errors = [k for k, (s, _) in faith.items() if s is None]
-    results = [fn(cases, outcomes) for fn in m.DETERMINISTIC]
+    results = [fn(cases, outcomes) for fn in m.DETERMINISTIC if fn is not m.injection_pass_rate]
+    results.append(m.injection_pass_rate(cases, outcomes, grants=grants))
     results += m.guardrail_metrics(cases, actions)
     if rail_off:
         results.append(
@@ -359,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
                 rail_off,
                 name="injection_pass_rate_rail_off",
                 note="same check with the input rail off: do the layers below it hold? (not gated)",
+                grants=grants_off,
             )
         )
     letter_metric = m.mean_metric("letter_quality_mean", scored, "1-5 rubric mean")
@@ -400,9 +430,13 @@ def main(argv: list[str] | None = None) -> int:
                 letter_error=g if isinstance(g, str) else None,
                 faithfulness=f_score,
                 faithfulness_error=f_err,
-                injection_passed=m.injection_passed(c, o) if c.kind == "adversarial" else None,
+                injection_passed=m.injection_passed(c, o, grants)
+                if c.kind == "adversarial"
+                else None,
                 injection_passed_rail_off=(
-                    m.injection_passed(c, rail_off.get(c.id)) if c.id in rail_off else None
+                    m.injection_passed(c, rail_off.get(c.id), grants_off)
+                    if c.id in rail_off
+                    else None
                 ),
             )
         )
@@ -428,7 +462,11 @@ def main(argv: list[str] | None = None) -> int:
     }
     (args.out_dir / "latest.json").write_text(json.dumps(report, indent=2, default=str) + "\n")
     summary = m.summary_markdown(
-        results, thresholds, failures, header=header, misses=expectation_misses(cases, outcomes)
+        results,
+        thresholds,
+        failures,
+        header=header,
+        misses=expectation_misses(cases, outcomes, grants),
     )
     (args.out_dir / "summary.md").write_text(summary)
     print(summary)
