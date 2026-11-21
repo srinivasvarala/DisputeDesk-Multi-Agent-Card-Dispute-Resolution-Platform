@@ -256,9 +256,8 @@ def test_a_new_run_keeps_the_previous_results(tmp_path: Path) -> None:
     archive_previous(tmp_path)
     archive_previous(tmp_path)  # twice in the same second must not clobber or fail
 
-    kept = sorted(p.name for p in (tmp_path / "history").iterdir())
-    assert (len(kept) == 2 and kept[0].endswith("latest.json")) or kept[1].endswith("latest.json")
-    assert any((tmp_path / "history" / n).read_text() == '{"run": "old"}' for n in kept)
+    kept = {p.name.split("-", 1)[1]: p.read_text() for p in (tmp_path / "history").iterdir()}
+    assert kept == {"latest.json": '{"run": "old"}', "summary.md": "old summary"}
 
 
 def test_archiving_with_nothing_to_keep_is_a_no_op(tmp_path: Path) -> None:
