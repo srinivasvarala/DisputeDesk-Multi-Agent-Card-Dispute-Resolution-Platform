@@ -1,6 +1,6 @@
 # DisputeDesk progress
 
-Milestone status against [docs/PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md). Updated at the end of each milestone.
+Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated at the end of each milestone.
 
 | Milestone | Status | Completed | Commits |
 |---|---|---|---|
@@ -18,7 +18,7 @@ Milestone status against [docs/PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md).
 | M7.4: Input guardrail, demand judge, not-as-described facts | ✅ Done; gate red on 1 of 9 (decision accuracy 0.781, one case short) | 2026-11-21 | `a5e8ecf`, `f0c4b15`, `e99ca59`, `29b0ef4`, `1f3ab44`, `29d1ed7`, `0935b76`, see git log `feat(guardrails)` / `feat(graph)` / `feat(evals)` / `feat(data)` |
 | M8: UI, docs and polish | ✅ Done (demo GIF recorded and a fresh clone verified end to end on 2026-11-21; `docker compose up` from clean not re-run, see M8 gaps) | 2026-11-20 | `4fabc83`, `2004ee0`, `1d67b59`, `bb787c0`, see git log `docs` / `feat(ui)` / `fix(ui)` / `ci` |
 | M10: Close the safety gaps | ✅ Done (real-model behaviour of the output guardrail not yet measured, see M10 gaps) | 2026-11-21 | `a6047d6`, `de5d756`, `298b3e8`, `776f8bb`, `0af6403`, see git log `feat(graph)` / `feat(api)` / `feat(ui)` / `fix(audit)` / `docs` |
-| M9: AWS deployment (phase 2) | ⏳ Not started (phase 3 roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)) | | |
+| M9: AWS deployment (phase 2) | ⏳ Not started (phase 3 roadmap: [docs/ROADMAP.md](ROADMAP.md)) | | |
 
 Legend: ✅ Done · 🚧 In progress · ⏳ Not started · ⚠️ Blocked
 
@@ -357,7 +357,7 @@ Tests: 317 unit, 57 integration passing; ruff and mypy clean.
 |---|---|
 | One case shows one connected trace across API, agents and MCP calls | ✅ Real case `case_0004` (real `claude-sonnet-5-5`): one Jaeger trace `539ce7c8b04989555ee812b532d89b0b`, 134 spans, one root `POST /disputes`. Unit test asserts one trace id and parent links. |
 | Cost per case is visible | ✅ Langfuse shows $0.028028 for `case_0004` (8,590 tokens); `case.cost_usd` on the root span and as a metric. |
-| Screenshot committed to `docs/` | ✅ [Langfuse trace](docs/img/langfuse-trace.jpg), [Langfuse dashboard](docs/img/langfuse-dashboard.jpg), [Jaeger trace](docs/img/jaeger-trace.jpg) |
+| Screenshot committed to `docs/` | ✅ [Langfuse trace](img/langfuse-trace.jpg), [Langfuse dashboard](img/langfuse-dashboard.jpg), [Jaeger trace](img/jaeger-trace.jpg) |
 
 Tests: 331 unit, 58 integration passing; ruff and mypy clean.
 
@@ -579,7 +579,7 @@ API errors during a poll tick or a button click were not caught (fragment reruns
 
 ## M10: Close the safety gaps ✅
 
-**Goal:** make the safety claims true without footnotes. Part of the phase 3 plan in [docs/ROADMAP.md](docs/ROADMAP.md).
+**Goal:** make the safety claims true without footnotes. Part of the phase 3 plan in [docs/ROADMAP.md](ROADMAP.md).
 
 ### Delivered
 - **Output guardrail wired (R1).** A new `output_check` graph step (`graph/output_guard.py`) runs `check_output` on every accept or reject letter, after the reviewer approves and before finalize or the human gate. PII is redacted and saved as a new draft version by its own actor, `output_guard` (allowlist: `save_draft` only). An ungrounded dollar amount or card last-4 blocks the letter; a block or a guardrail error sets `output_flag` and escalates the case, so a blocked letter never reaches the approval gate. `escalate` drafts send no letter and are skipped. Grounding material is the case amounts (formatted as dollars), the evidence, and the policy answer and its quotes, never the letter or the analyst's draft.

@@ -1,6 +1,6 @@
 # Roadmap: phase 3 (M10 to M17)
 
-M0 to M8 are done (see [PROGRESS.md](../PROGRESS.md)). This roadmap closes the gaps found in the
+M0 to M8 are done (see [PROGRESS.md](PROGRESS.md)). This roadmap closes the gaps found in the
 architecture and code review, and turns the project into one that can be shown to a hiring
 manager. M9 (full AWS deployment) is **not** scheduled here: M16 delivers a smaller hosted demo
 first, and M9 stays an optional follow-up.
@@ -113,7 +113,7 @@ protect the rest of the roadmap's credibility.
 A real login system, token revocation, rate limiting (M16 adds a demo-level budget), or a payout.
 
 ### Outcome (2026-11-21)
-Delivered; see [PROGRESS.md](../PROGRESS.md#m10-close-the-safety-gaps-). The four decisions below were
+Delivered; see [PROGRESS.md](PROGRESS.md#m10-close-the-safety-gaps-). The four decisions below were
 taken as recommended, with one change to the plan: the starter is stored in the graph state, not in
 a `started_by` column on `cases`. The audit leak turned out wider than listed (reviewer, policy,
 the MCP audit wrapper and the runtime span), and a further gap was found and left open: MCP audit

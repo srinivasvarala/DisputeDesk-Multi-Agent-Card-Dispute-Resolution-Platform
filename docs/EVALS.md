@@ -10,7 +10,7 @@ Evals are the part of an LLM system that demos usually skip. Here they are a fir
 
 - **Thresholds were committed before the first real run** ([`evals/thresholds.yml`](../evals/thresholds.yml), commit `eb06e54`) and have not changed since. A failing gate is fixed in the system or recorded as a gap, never loosened.
 - **A metric that cannot be computed counts as a failure**, not a skip.
-- **Every change to the eval harness after seeing results is disclosed** in [PROGRESS.md](../PROGRESS.md), because it moves the numbers.
+- **Every change to the eval harness after seeing results is disclosed** in [PROGRESS.md](PROGRESS.md), because it moves the numbers.
 - The run is end to end: the **real graph, real model and real retriever**, with an in-memory store so nothing touches app tables or the audit log.
 
 ## What is evaluated

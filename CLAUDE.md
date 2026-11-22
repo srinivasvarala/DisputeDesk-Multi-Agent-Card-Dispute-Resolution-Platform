@@ -30,5 +30,5 @@ Portfolio quality, not production scale. Prefer simple and readable over clever.
 - Write tests alongside code. Commit after each green step with a conventional commit message.
 - If a requirement is ambiguous, ask. Do not guess.
 - Do not add dependencies without saying why.
-- At the end of each milestone, update PROGRESS.md (status table + a section with delivered items,
+- At the end of each milestone, update docs/PROGRESS.md (status table + a section with delivered items,
   acceptance results, decisions, known gaps) and commit it with the milestone.

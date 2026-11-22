@@ -1,7 +1,7 @@
 # Architecture
 
 How DisputeDesk is built, and why the boundaries sit where they do. This describes the system as it
-exists in the code. The README is the overview, [PROGRESS.md](PROGRESS.md) is the milestone
+exists in the code. The README is the overview, [PROGRESS.md](docs/PROGRESS.md) is the milestone
 history, the [threat model](docs/THREAT_MODEL.md) lists the attacks, and the [ADRs](docs/adr/) record the
 decisions.
 
