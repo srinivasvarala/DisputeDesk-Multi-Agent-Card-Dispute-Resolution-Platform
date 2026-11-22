@@ -4,6 +4,11 @@
 Multi-agent card-dispute resolution demo. See ARCHITECTURE.md for architecture and docs/PROJECT_BLUEPRINT.md for the original plan and milestones.
 Portfolio quality, not production scale. Prefer simple and readable over clever.
 
+## Where things are
+- README.md: the pitch and headline numbers. ARCHITECTURE.md: the system design.
+- docs/: PROGRESS.md (milestone log), EVALS.md (eval method and results), ROADMAP.md (plan),
+  THREAT_MODEL.md, PICKUP_LATER.md (leftover work), adr/ (decisions).
+
 ## Commands
 - Install: `uv sync --all-extras --dev`
 - Run infra: `docker compose up -d`
@@ -31,4 +36,5 @@ Portfolio quality, not production scale. Prefer simple and readable over clever.
 - If a requirement is ambiguous, ask. Do not guess.
 - Do not add dependencies without saying why.
 - At the end of each milestone, update docs/PROGRESS.md (status table + a section with delivered items,
-  acceptance results, decisions, known gaps) and commit it with the milestone.
+  acceptance results, decisions, known gaps) and commit it with the milestone. When eval numbers
+  change, also update the README results table and docs/EVALS.md.
