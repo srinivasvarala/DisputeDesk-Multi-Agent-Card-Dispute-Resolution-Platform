@@ -12,9 +12,9 @@
 > Portfolio project, not production. All data is synthetic and the policy rulebook is fictional.
 
 <p align="center">
-  <img src="docs/img/disputedesk-review-demo.gif" alt="Demo: start a high-risk dispute, watch the agents work live, approve it at the human gate, and see it resolved" width="100%">
+  <img src="docs/img/disputedesk-real-model-gate.gif" alt="Demo with the real model: an analyst cannot decide a high-risk case, an approver approves it at the human gate, and the case resolves" width="100%">
 </p>
-<p align="center"><em>Start a dispute, watch the five agents work live, approve it at the human gate, and the case resolves. (This recording uses the scripted offline model. The real model is shown <a href="#demo">below</a>.)</em></p>
+<p align="center"><em><strong>Real model (Claude Haiku 5.5).</strong> A $849.48 duplicate-charge dispute on a high-risk merchant ran through all five agents and the output check, then paused at the human gate. The analyst who started it cannot decide it (maker-checker). An approver reads the rationale and letter and approves, and the case resolves.</em></p>
 
 ## The 60-second version
 
@@ -56,6 +56,11 @@ What a production agent platform needs, and where each one lives in this repo.
 ---
 
 ## Demo
+
+<p align="center">
+  <img src="docs/img/disputedesk-review-demo.gif" alt="Scripted-model demo: start a dispute, watch the agents work live, approve at the human gate" width="100%">
+</p>
+<p align="center"><em>The full flow including starting the dispute and the live-updating agent trace. (Scripted offline model.)</em></p>
 
 <p align="center">
   <img src="docs/img/reviewer-ui-trace.jpg" alt="Reviewer UI: a high-risk case waiting for human approval, with the agent trace and draft decision" width="49%">
@@ -320,7 +325,7 @@ tests/               # unit (501) and integration (59, against real Postgres)
 ## Limitations
 
 - **Decision accuracy is one case short of its gate** (0.781 vs 0.80), one run per configuration gives no variance estimate, the labels were written by hand, and the system and the judge are the same model. Details in [docs/EVALS.md](docs/EVALS.md).
-- **With the real model, high-risk cases tend to escalate before reaching the human gate** (2 of 2 tried), consistent with a strict Reviewer. The approve-and-resolve flow is demonstrated with the scripted model.
+- **With the real model, high-risk cases can escalate before the human gate.** Two early tries did (a strict Reviewer), and a later one (`case_0034`) reached the gate and resolved, shown in the demo above. Three tries is an anecdote, not a rate.
 - **The output guardrail is live but unmeasured with the real model.** Its false-positive rate is not known yet. The input judge is off by default, and its patterns were tuned after reading the golden attacks.
 - **Injection is reduced, not eliminated.** The defence is structural (labelling, rule-based approval, reviewer, human), and the real model was red-teamed with only 18 prompts.
 - **Auth is a demo.** One shared HS256 secret signs user and agent tokens, with no login, revocation or rate limiting.
