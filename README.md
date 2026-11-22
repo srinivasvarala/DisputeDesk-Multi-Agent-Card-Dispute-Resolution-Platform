@@ -318,7 +318,7 @@ src/disputedesk/
 data/policies/       # 15 fictional rulebook documents
 evals/               # golden.jsonl (42), retrieval.jsonl (25), Promptfoo red team, thresholds.yml
 ARCHITECTURE.md      # system diagram, trust boundaries, design rules
-docs/                # EVALS, THREAT_MODEL, ROADMAP, PICKUP_LATER, adr/, img/
+docs/                # EVALS, THREAT_MODEL, ROADMAP, PROJECT_BLUEPRINT, PICKUP_LATER, adr/, img/
 tests/               # unit (501) and integration (59, against real Postgres)
 .github/workflows/   # ci.yml, security.yml, evals.yml
 ```
@@ -364,7 +364,7 @@ uv run pytest tests/integration -q     # needs `docker compose up -d` and the se
 uv run pre-commit install              # optional: run the same checks on every commit
 ```
 
-Project conventions are in [CLAUDE.md](CLAUDE.md). Architecture and milestones are in [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md), and status in [PROGRESS.md](PROGRESS.md).
+Project conventions are in [CLAUDE.md](CLAUDE.md). Architecture is in [ARCHITECTURE.md](ARCHITECTURE.md), the original plan and milestones in [docs/PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md), and status in [PROGRESS.md](PROGRESS.md).
 
 ## License
 

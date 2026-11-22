@@ -1,6 +1,6 @@
 # DisputeDesk progress
 
-Milestone status against [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md). Updated at the end of each milestone.
+Milestone status against [docs/PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md). Updated at the end of each milestone.
 
 | Milestone | Status | Completed | Commits |
 |---|---|---|---|

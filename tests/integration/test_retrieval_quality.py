@@ -21,7 +21,7 @@ from disputedesk.rag.ingest import ingest, load_corpus
 from disputedesk.rag.retriever import Retriever
 
 ROOT = Path(__file__).resolve().parents[2]
-HIT_AT_5_THRESHOLD = 0.8  # M2 acceptance criterion (PROJECT_BLUEPRINT.md)
+HIT_AT_5_THRESHOLD = 0.8  # M2 acceptance criterion (docs/PROJECT_BLUEPRINT.md)
 GATED_CONFIG = "hybrid + rerank"
 
 

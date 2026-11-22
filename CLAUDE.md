@@ -1,7 +1,7 @@
 # DisputeDesk: Claude Code instructions
 
 ## What this is
-Multi-agent card-dispute resolution demo. See PROJECT_BLUEPRINT.md for architecture and milestones.
+Multi-agent card-dispute resolution demo. See ARCHITECTURE.md for architecture and docs/PROJECT_BLUEPRINT.md for the original plan and milestones.
 Portfolio quality, not production scale. Prefer simple and readable over clever.
 
 ## Commands
