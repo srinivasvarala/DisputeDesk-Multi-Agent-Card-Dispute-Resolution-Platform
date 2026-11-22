@@ -1,6 +1,6 @@
 # DisputeDesk
 
-**An enterprise-style multi-agent system that resolves card disputes without trusting LLMs with the money.** Five LLM agents do the reading and writing. Plain code makes every decision that must not be wrong. A human approves the risky cases. An eval harness measures all of it.
+**An enterprise-style multi-agent system that resolves card disputes without trusting LLMs with the money.** Five LLM agents make the judgement calls. Plain code enforces the invariants that must never be wrong. A human approves the risky cases. An eval harness measures all of it.
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)](https://python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-orange?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
@@ -19,7 +19,7 @@
 ## The 60-second version
 
 - **The problem.** A cardholder disputes a charge. Someone must gather evidence, find the governing rule, decide on a refund, write the letter and, for risky cases, get a human sign-off. That suits LLM agents, and it is dangerous: customer text is **untrusted**, a wrong refund **costs money**, and "the model decided" is **not an audit answer**.
-- **The approach.** The model reads and writes. **Code decides.** Risk tier, approval threshold, tool permissions and escalation triggers are plain Python, so no prompt can talk its way past them.
+- **The approach.** **Agents reason and decide. Code enforces the invariants.** Classification, evidence weighing, policy interpretation, the accept / reject / escalate decision, the letter and the review are agent judgement. Risk tier, approval, tool permissions and status changes are plain Python, so no prompt can talk its way past them.
 - **The evidence.** 5 agents on LangGraph, 3 MCP tool servers, hybrid RAG (hit@5 **0.92**), a 7-layer guardrail stack (**23/24** held-out attacks caught, **0** false positives), one connected trace per case (**$0.028** for a real run) and a gated eval suite where **8 of 9 gates pass** and the 9th is reported one case short.
 
 ```bash
@@ -155,6 +155,18 @@ flowchart LR
 | **Resolution** | Decides and writes the letter | `save_draft` | accept / reject / escalate, rationale, letter, confidence | Change case status or approve its own refund |
 | **Reviewer** | Independent check | none | approve, or revise with feedback | Call any tool. The 2-revision limit is enforced by the graph |
 | **`dispute_workflow`** *(no LLM)* | Runs the input guardrail, owns status changes | `get_case`, `update_status` | n/a | n/a. The only component that moves a case between states |
+
+### Where the agents have autonomy
+
+| Agent | Judgement it owns | Checked by |
+|---|---|---|
+| **Router** | Reads a free-text narrative and picks the reason code | Rules compute risk tier from the result |
+| **Evidence** | Weighs raw tool output and leans toward customer, merchant or inconclusive | Facts are raw tool output, never model-written |
+| **Policy** | Decides which retrieved excerpts answer the question, and cites them | Code verifies every citation against the retrieved text |
+| **Resolution** | Chooses accept, reject or escalate and writes the letter | Reviewer agent, then rules (confidence, repeat disputer), then the output guardrail |
+| **Reviewer** | Critiques the draft and can send it back for revision (a bounded loop) | The graph enforces the 2-revision limit |
+
+Any agent's judgement can end in an escalation to a human, which the real-model runs do. One deliberate limit: code, not the model, picks which evidence tools run for a reason code, and the policy query is built from structured fields, never customer text. That trades some autonomy for least privilege and predictable cost, and the eval gates are what would justify loosening it.
 
 ### What the model decides, and what code decides
 
