@@ -1,8 +1,8 @@
 # Architecture
 
 How DisputeDesk is built, and why the boundaries sit where they do. This describes the system as it
-exists in the code. The README is the overview, [PROGRESS.md](../PROGRESS.md) is the milestone
-history, the [threat model](THREAT_MODEL.md) lists the attacks, and the [ADRs](adr/) record the
+exists in the code. The README is the overview, [PROGRESS.md](PROGRESS.md) is the milestone
+history, the [threat model](docs/THREAT_MODEL.md) lists the attacks, and the [ADRs](docs/adr/) record the
 decisions.
 
 > The data and the rulebook are synthetic. This is a portfolio project, not production scale.
@@ -147,7 +147,7 @@ Agents do not touch the database. They call **three MCP servers**, each owning a
 | cases | Cases, drafts, status changes | `get_case`, `update_status`, `save_draft` |
 
 They run over stdio in-process (the `ToolBox` uses a real MCP client) or as streamable HTTP
-services, using the same code (`mcp_servers/common/runner.py`). See [ADR-005](adr/005-mcp-boundaries.md).
+services, using the same code (`mcp_servers/common/runner.py`). See [ADR-005](docs/adr/005-mcp-boundaries.md).
 
 Four layers stop an agent from calling a tool it should not:
 
@@ -188,7 +188,7 @@ amount and card last-4 in the letter to appear in the case material (the case am
 evidence, the policy answer), and a letter that fails it escalates the case instead of being sent.
 A guardrail error escalates too. An `escalate` draft sends no letter and is not checked. Audit rows hold the rail names and entity types, never the text. The LLM judge is
 off by default (`GUARDRAIL_JUDGE=false`) and is an opt-in layer for generalisation. See
-[ADR-003](adr/003-guardrails.md) and the [threat model](THREAT_MODEL.md).
+[ADR-003](docs/adr/003-guardrails.md) and the [threat model](docs/THREAT_MODEL.md).
 
 The design is **defence in depth**: if the input guardrail misses an attack, the labelled-data
 boundary, the allowlists, the rule-based escalation and the human gate are still there. The evals
@@ -211,7 +211,7 @@ is idempotent: re-running it updates only the chunks that changed.
 > anything in `data/policies/`, run `uv run python -m disputedesk.rag.ingest`, or the system keeps
 > answering from the old text. Rulebook gaps are the most common cause of "no rule settles this"
 > escalations, and fixing them means editing the rulebook, not the prompt. See
-> [ADR-004](adr/004-hybrid-rag.md).
+> [ADR-004](docs/adr/004-hybrid-rag.md).
 
 ## 7. State, persistence and the audit log
 
@@ -285,7 +285,7 @@ Three roles map to those scopes in `security/scopes.py`: **analyst** (read, star
 **thresholds are never lowered to make a run pass.** The harness archives the previous results
 before overwriting them. CI runs the cheap suites on every push, and the full model-backed run is a
 separate workflow. Current numbers, including the one red metric, are in the
-[README](../README.md#evaluation-how-i-know-it-works-and-where-it-doesnt), not here, so this file
+[README](README.md#evaluation-how-i-know-it-works-and-where-it-doesnt), not here, so this file
 does not go stale.
 
 ## 11. Design rules

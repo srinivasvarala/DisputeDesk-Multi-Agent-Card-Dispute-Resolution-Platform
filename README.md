@@ -102,7 +102,7 @@ flowchart LR
     class PG data
 ```
 
-The detailed system diagram, trust boundaries and design rules are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The detailed system diagram, trust boundaries and design rules are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### How a case moves through the system
 
@@ -317,7 +317,8 @@ src/disputedesk/
 └── config.py        # env-only config; secrets are SecretStr
 data/policies/       # 15 fictional rulebook documents
 evals/               # golden.jsonl (42), retrieval.jsonl (25), Promptfoo red team, thresholds.yml
-docs/                # ARCHITECTURE, EVALS, THREAT_MODEL, ROADMAP, adr/, img/
+ARCHITECTURE.md      # system diagram, trust boundaries, design rules
+docs/                # EVALS, THREAT_MODEL, ROADMAP, PICKUP_LATER, adr/, img/
 tests/               # unit (501) and integration (59, against real Postgres)
 .github/workflows/   # ci.yml, security.yml, evals.yml
 ```
